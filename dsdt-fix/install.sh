@@ -81,10 +81,13 @@ if [ "$HOOK_OK" -ne 1 ]; then
   fi
 fi
 
-# 4. 重建 initramfs
-echo "[4/4] 重建 initramfs（mkinitcpio -P）..."
-# --nocolor 去掉颜色码；</dev/null 防止万一有交互提示导致脚本卡住
-mkinitcpio -P --nocolor </dev/null
+# 4. 重建 initramfs（交互式；CachyOS/Limine 用 limine-mkinitcpio，会弹 Y/N 让用户选择）
+echo "[4/4] 重建 initramfs ..."
+if command -v limine-mkinitcpio >/dev/null 2>&1; then
+  limine-mkinitcpio
+else
+  mkinitcpio -P
+fi
 
 echo ""
 echo "完成。现在可以重启（不要带 acpi=off / noapic）。"
