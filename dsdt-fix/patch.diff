@@ -1,0 +1,162 @@
+﻿# =====================================================================
+# HP OMEN Transcend 16 (BIOS F.29) DSDT 补丁 —— 共 6 处改动
+# 每处标注：问题 / 原理 / 出处
+# 注意：本文件是加了注释的 diff，仅供阅读；安装请用 dsdt.aml
+# =====================================================================
+
+diff --git a/dsdt-fix/dsdt-original.dsl b/dsdt-fix/dsdt.dsl
+index 8942b0a..5fb23b0 100644
+--- a/dsdt-fix/dsdt-original.dsl
++++ b/dsdt-fix/dsdt.dsl
+# ── 改动 1：提升 OEM Revision（0x00000002 → 0x00000003）──────────────
+# 问题：内核 initrd DSDT 覆盖机制，只在 override 表的 OEM Revision
+#       比固件表的「更大」时才替换，否则被忽略（覆盖不生效）。
+# 原理：内核按 签名+OEMID+OEM Table ID 匹配，且要求
+#       oem_revision 严格大于固件表（固件=0x2，改 0x3 才满足）。
+# 出处：Linux 内核文档 initrd_table_override；Arch Wiki「DSDT」；
+#       j0hnwang F27 补丁「Change 1 (N)」。
+
+@@ -18,7 +18,7 @@
+  *     Compiler ID      "HP  "
+  *     Compiler Version 0x00040000 (262144)
+  */
+-DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000002)
++DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000003)
+ {
+     /*
+      * iASL Warning: There were 238 external control methods found during
+# ── 改动 2：删除整个 Device (IC04) —— 开机卡死的根因 ───────────────
+# 问题：DSDT 在 _SB.PC00 作用域把 IC04 声明两次：
+#       整数字段 IC04(64bit) 与 Device(IC04)/HPIC0004 同名冲突。
+#       I2C4._PS3 调 SOD3(IC04) 时名字解析成 Device，
+#       SOD3 里 (GPCB()+Arg0) 把 Device 当整数做加法
+#       → AE_AML_OPERAND_TYPE → 约一半概率 Oops/死循环，开机卡死。
+# 原理：删掉冲突的 Device 后，IC04 永远只解析成整数字段，
+#       SOD3 与 I2CH(IC04) 都恢复。是「消除根因」而非「绕过症状」。
+# 出处：LauriSarap/omen-transcend-16-linux-fix（F.25 的 Fix 1）；
+#       j0hnwang/OMEN-Transcend-16-ACPI-fix「Change 2 (L)」。
+
+@@ -36967,18 +36967,6 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000002)
+         }
+     }
+ 
+-    Scope (_SB.PC00)
+-    {
+-        Device (IC04)
+-        {
+-            Name (_HID, "HPIC0004")  // _HID: Hardware ID
+-            Method (_STA, 0, NotSerialized)  // _STA: Status
+-            {
+-                Return (0x0F)
+-            }
+-        }
+-    }
+-
+     Scope (_SB)
+     {
+         Device (PR00)
+# ── 改动 3：I2C0 触控板 TPD0 —— 强制 ELAN + 硬编码 _STA ────────────
+# 问题：Linux 下触控板不工作。固件给触控板的是占位 HID("XXXX0000")，
+#       且依赖 Windows 侧(OMEN Gaming Hub)才会正确初始化。
+# 原理：在 _INI 里直接引导到 ELAN 分支（TPDT=0x05/TPDB=0x15/TPDH=1），
+#       并把占位 _HID 强制写成 "ELAN07CA"（Linux 有对应驱动）；
+#       同时 _STA 硬编码返回 0x0F，让设备对 OS 始终可见。
+# 出处：no-hands-hand F27-Patch-Procedure.md「Change 3 (N)」。
+
+@@ -107315,6 +107303,17 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000002)
+             CreateDWordField (SBFI, 0x05, INT2)
+             Method (_INI, 0, NotSerialized)  // _INI: Initialize
+             {
++                Or (\_SB.PC00.I2C0.I2CN, One, \_SB.PC00.I2C0.I2CN)
++                Store (0x05, \TPDT)
++                Store (0x15, \TPDB)
++                Store (One, \TPDH)
++                Store (One, \TPDS)
++                Store (Zero, \TPDM)
++                If (LEqual (_HID, "XXXX0000"))
++                {
++                    Store ("ELAN07CA", _HID)
++                }
++
+                 If ((OSYS < 0x07DC))
+                 {
+                     SRXO (GPDI, One)
+@@ -107441,12 +107440,7 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000002)
+ 
+             Method (_STA, 0, NotSerialized)  // _STA: Status
+             {
+-                If (((TPDT != Zero) && (I2CN & One)))
+-                {
+-                    Return (0x0F)
+-                }
+-
+-                Return (Zero)
++                Return (0x0F)
+             }
+ 
+             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+# ── 改动 4：I2C1 _INI —— 引导到 ELAN 分支（Recommended，作者存疑）───
+# 问题：与改动 3 同源，I2C1 上也有触控板相关初始化。
+# 原理：在 I2C1._INI 里同样设置 TPDT/TPDB/TPDH/TPDS 引导变量。
+# 出处：no-hands-hand F27-Patch-Procedure.md「Change 4 (R)」。
+# 注意：作者自称「不确定是否必要」，若触控板异常可删除此改动。
+
+@@ -107473,8 +107467,12 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000002)
+         Name (I2CI, One)
+         Method (_INI, 0, NotSerialized)  // _INI: Initialize
+         {
+-            I2CN = SDS1 /* \SDS1 */
++            I2CN = One
+             I2CX = One
++            Store (0x05, \TPDT)
++            Store (0x15, \TPDB)
++            Store (One, \TPDH)
++            Store (0x02, \TPDS)
+         }
+ 
+         If ((ToInteger (LLKE) == One))
+# ── 改动 5：禁用 I2C1 上的重复设备 TPD0 / LLKB ─────────────────────
+# 问题：HP 固件在 I2C1 上还定义了一套重复的触控板(TPD0)和键盘(LLKB)，
+#       非 Windows 系统下会导致设备冲突/错误枚举。
+# 原理：把这两个重复设备的 _STA 硬编码返回 Zero（不可见），
+#       只保留 I2C0 上那个真正可用的 TPD0。
+# 出处：no-hands-hand F27-Patch-Procedure.md「Change 5 (N)」。
+
+@@ -107539,7 +107537,7 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000002)
+ 
+                 Method (_STA, 0, NotSerialized)  // _STA: Status
+                 {
+-                    Return (0x0F)
++                    Return (Zero)
+                 }
+ 
+                 Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+@@ -107710,11 +107708,6 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000002)
+ 
+                 Method (_STA, 0, NotSerialized)  // _STA: Status
+                 {
+-                    If (((TPDT != Zero) && (I2CN & One)))
+-                    {
+-                        Return (0x0F)
+-                    }
+-
+                     Return (Zero)
+                 }
+ 
+# ── 改动 6：修复 Cirrus 音频字符串 —— 内置喇叭无声 ─────────────────
+# 问题：喇叭无声音。固件把属性名写成
+#       "cirrus,cirrus,boost-peak-milliamp"（vendor 前缀重复一次），
+#       Linux 的 Cirrus 驱动不识别这个错误字符串。
+# 原理：改成正确的 "cirrus,boost-peak-milliamp"，驱动才能解析喇叭参数。
+# 出处：LauriSarap 的 Fix 2；
+#       no-hands-hand F27-Patch-Procedure.md「Change 6 (L)」。
+
+@@ -107929,7 +107922,7 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000002)
+ 
+                     Package (0x02)
+                     {
+-                        "cirrus,cirrus,boost-peak-milliamp", 
++                        "cirrus,boost-peak-milliamp", 
+                         Package (0x02)
+                         {
+                             0x1004, 

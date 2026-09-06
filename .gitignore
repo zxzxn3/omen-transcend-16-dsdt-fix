@@ -1,0 +1,9 @@
+# ACPI 工作目录（iasl 工具与中间产物，不纳入版本控制）
+acpi-work/
+
+# Bugzilla 网页缓存资源（浏览器 CSS/JS，无实质内容，且文件名超长）
+*_files/
+
+# 系统/编辑器垃圾
+Thumbs.db
+.DS_Store
