@@ -83,7 +83,8 @@ fi
 
 # 4. 重建 initramfs
 echo "[4/4] 重建 initramfs（mkinitcpio -P）..."
-mkinitcpio -P
+# --nocolor 去掉颜色码；</dev/null 防止万一有交互提示导致脚本卡住
+mkinitcpio -P --nocolor </dev/null
 
 echo ""
 echo "完成。现在可以重启（不要带 acpi=off / noapic）。"
