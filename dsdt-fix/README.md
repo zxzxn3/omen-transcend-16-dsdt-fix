@@ -43,6 +43,7 @@ DSDT 在 `_SB.PC00` 作用域把 `IC04` 声明了两次：
 | `dsdt-original.dsl` | 原始 DSDT 反汇编源码（补丁前，用于对照） |
 | `dsdt-original.dat` | 原始 DSDT 二进制（备份） |
 | `patch.diff` | 补丁前后源码差异（unified diff） |
+| `install.sh` | 一键安装脚本（挂载 D 盘 → 装 hook → 重建 initramfs） |
 
 ## 安装（CachyOS / Arch + Limine）
 
@@ -53,6 +54,12 @@ sudo cp dsdt.aml /etc/initcpio/acpi_override/
 # 编辑 /etc/mkinitcpio.conf，在 HOOKS=(...) 里 base 之后加 acpi_override
 sudo mkinitcpio -P
 sudo reboot          # 不要带 acpi=off / noapic
+```
+
+或直接跑一键脚本（自动挂载 Windows D: 盘、复制 .aml、插入 hook、重建）：
+
+```bash
+sudo bash install.sh            # 或 sudo bash install.sh /dev/nvme0n1p5
 ```
 
 ## 验证

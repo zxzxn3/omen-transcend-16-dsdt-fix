@@ -33,6 +33,13 @@ sudo mkinitcpio -P
 sudo reboot          # do NOT use acpi=off / noapic
 ```
 
+Or use the helper script (mounts the Windows `D:` drive and does the above
+automatically, idempotent):
+
+```bash
+sudo bash dsdt-fix/install.sh            # 或 sudo bash install.sh /dev/nvme0n1p5
+```
+
 ## Root cause
 
 The DSDT declares `IC04` twice in `_SB.PC00` scope — once as a 64-bit integer
