@@ -56,10 +56,11 @@ sudo mkinitcpio -P
 sudo reboot          # 不要带 acpi=off / noapic
 ```
 
-或直接跑一键脚本（自动挂载 Windows D: 盘、复制 .aml、插入 hook、重建）：
+或跑脚本（先手动挂载 D 盘，脚本负责复制 .aml、插 hook、重建）：
 
 ```bash
-sudo bash install.sh            # 或 sudo bash install.sh /dev/nvme0n1p5
+sudo mount /dev/nvme0n1p5 /mnt/d
+sudo bash install.sh /mnt/d/linux-hate-me/dsdt-fix/dsdt.aml
 ```
 
 ## 验证

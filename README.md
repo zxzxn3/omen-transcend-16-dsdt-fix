@@ -33,11 +33,11 @@ sudo mkinitcpio -P
 sudo reboot          # do NOT use acpi=off / noapic
 ```
 
-Or use the helper script (mounts the Windows `D:` drive and does the above
-automatically, idempotent):
+Or use the helper script (you mount `D:` yourself, then it installs and rebuilds):
 
 ```bash
-sudo bash dsdt-fix/install.sh            # 或 sudo bash install.sh /dev/nvme0n1p5
+sudo mount /dev/nvme0n1p5 /mnt/d
+sudo bash dsdt-fix/install.sh /mnt/d/linux-hate-me/dsdt-fix/dsdt.aml
 ```
 
 ## Root cause
