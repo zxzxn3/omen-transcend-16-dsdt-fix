@@ -9,13 +9,16 @@ Fixes the broken ACPI tables of the **HP OMEN Transcend 16 (16-U1024TX, BIOS F.2
 that cause Linux to:
 
 - hang / panic at boot — `AE_AML_OPERAND_TYPE`, oops in `acpi_ns_build_normalized_path`
-- fail to detect the **touchpad**
 - fail to drive the **built-in speakers**
+
+> The **touchpad works out of the box** with the stock tables on this model,
+> so it is deliberately left untouched (the community touchpad patches were
+> tried and reverted).
 
 ## What's inside
 
 - [`dsdt-fix/`](dsdt-fix/) — the compiled DSDT override (`dsdt.aml`), patched
-  source, original tables, and an annotated `patch.diff` (6 changes, each with
+  source, original tables, and an annotated `patch.diff` (3 changes, each with
   problem / principle / source).
 - [`dsdt-fix/README.md`](dsdt-fix/README.md) — install / verify / revert instructions.
 - Diagnosis logs (`dmesg`, `journalctl`, installer log).
@@ -47,8 +50,8 @@ cross-verified against, the following public sources:
 - **[j0hnwang/OMEN-Transcend-16-ACPI-fix](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)**
   — DSDT patches for firmware F.11 / F.12 / F.27 / F.28.
 - **[no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27](https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27)**
-  — F.27 full patch procedure (`F27-Patch-Procedure.md`), source of the
-  6-change layout including the touchpad fixes.
+  — F.27 full patch procedure (`F27-Patch-Procedure.md`). Its touchpad changes
+  were tried but reverted (touchpad already works on 16-U1024TX).
 - **[LauriSarap/omen-transcend-16-linux-fix](https://github.com/LauriSarap/omen-transcend-16-linux-fix)**
   — F.25 fix: remove conflicting `IC04` device + Cirrus audio string.
 

@@ -107303,17 +107303,6 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000003)
             CreateDWordField (SBFI, 0x05, INT2)
             Method (_INI, 0, NotSerialized)  // _INI: Initialize
             {
-                Or (\_SB.PC00.I2C0.I2CN, One, \_SB.PC00.I2C0.I2CN)
-                Store (0x05, \TPDT)
-                Store (0x15, \TPDB)
-                Store (One, \TPDH)
-                Store (One, \TPDS)
-                Store (Zero, \TPDM)
-                If (LEqual (_HID, "XXXX0000"))
-                {
-                    Store ("ELAN07CA", _HID)
-                }
-
                 If ((OSYS < 0x07DC))
                 {
                     SRXO (GPDI, One)
@@ -107440,7 +107429,12 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000003)
 
             Method (_STA, 0, NotSerialized)  // _STA: Status
             {
-                Return (0x0F)
+                If (((TPDT != Zero) && (I2CN & One)))
+                {
+                    Return (0x0F)
+                }
+
+                Return (Zero)
             }
 
             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
@@ -107467,12 +107461,8 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000003)
         Name (I2CI, One)
         Method (_INI, 0, NotSerialized)  // _INI: Initialize
         {
-            I2CN = One
+            I2CN = SDS1 /* \SDS1 */
             I2CX = One
-            Store (0x05, \TPDT)
-            Store (0x15, \TPDB)
-            Store (One, \TPDH)
-            Store (0x02, \TPDS)
         }
 
         If ((ToInteger (LLKE) == One))
@@ -107537,7 +107527,7 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000003)
 
                 Method (_STA, 0, NotSerialized)  // _STA: Status
                 {
-                    Return (Zero)
+                    Return (0x0F)
                 }
 
                 Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
@@ -107708,6 +107698,11 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000003)
 
                 Method (_STA, 0, NotSerialized)  // _STA: Status
                 {
+                    If (((TPDT != Zero) && (I2CN & One)))
+                    {
+                        Return (0x0F)
+                    }
+
                     Return (Zero)
                 }
 
