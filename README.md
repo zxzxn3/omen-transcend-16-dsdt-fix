@@ -36,6 +36,24 @@ The DSDT declares `IC04` twice in `_SB.PC00` scope — once as a 64-bit integer
 field, once as `Device (IC04)` (`_HID "HPIC0004"`). The name collision makes
 `SOD3 (IC04, ...)` receive a Device instead of an Integer → `AE_AML_OPERAND_TYPE`.
 
+## References / 参考与致谢
+
+The diagnosis and the 6 DSDT changes in this repo are adapted from, and
+cross-verified against, the following public sources:
+
+- **Bugzilla [#221847](https://bugzilla.kernel.org/show_bug.cgi?id=221847)**
+  (by David Bue Pedersen) — original root-cause analysis of the `IC04`
+  Device/Integer namespace collision and the `SOD3` abort.
+- **[j0hnwang/OMEN-Transcend-16-ACPI-fix](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)**
+  — DSDT patches for firmware F.11 / F.12 / F.27 / F.28.
+- **[no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27](https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27)**
+  — F.27 full patch procedure (`F27-Patch-Procedure.md`), source of the
+  6-change layout including the touchpad fixes.
+- **[LauriSarap/omen-transcend-16-linux-fix](https://github.com/LauriSarap/omen-transcend-16-linux-fix)**
+  — F.25 fix: remove conflicting `IC04` device + Cirrus audio string.
+
+本仓库的 F.29 补丁是把以上社区补丁逐处适配到 16-U1024TX / F.29 固件上的结果。
+
 ## 关于本项目（中文）
 
 本仓库主要由 **AI 编程代理**（GitHub Copilot，底层 DeepSeek）在人工指导下完成：

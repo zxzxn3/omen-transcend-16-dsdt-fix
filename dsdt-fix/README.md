@@ -28,6 +28,13 @@ DSDT 在 `_SB.PC00` 作用域把 `IC04` 声明了两次：
 
 > 每处的「问题 / 原理 / 出处」详见 `patch.diff` 内的注释。
 
+## 参考与致谢
+
+- Bugzilla [#221847](https://bugzilla.kernel.org/show_bug.cgi?id=221847)（David Bue Pedersen）——根因分析
+- [j0hnwang/OMEN-Transcend-16-ACPI-fix](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix) —— F.11/F.12/F.27/F.28 补丁
+- [no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27](https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27) —— F.27 完整补丁流程（6 处改动的来源）
+- [LauriSarap/omen-transcend-16-linux-fix](https://github.com/LauriSarap/omen-transcend-16-linux-fix) —— F.25：删 IC04 + Cirrus 字符串
+
 ## 文件
 
 | 文件 | 说明 |
