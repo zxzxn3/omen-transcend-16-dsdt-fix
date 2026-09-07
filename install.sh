@@ -67,8 +67,10 @@ on_exit() {
           mv -f "$STAGE/dsdt.orig" "$OVERRIDE_DIR/dsdt.aml" 2>/dev/null
           echo "  [OK] Restored previous override -> $OVERRIDE_DIR/dsdt.aml" >&2
         else
+          # 没有 dsdt.orig = 覆盖前本就没有 override → “原状”就是没有该文件，删除即还原
           rm -f -- "$OVERRIDE_DIR/dsdt.aml" 2>/dev/null
-          echo "  [OK] Removed the copied override (there was none before)." >&2
+          rmdir "$OVERRIDE_DIR" 2>/dev/null    # 若这空目录是本次新建的，一并清掉
+          echo "  [OK] Restored previous state (there was no override before)." >&2
         fi
       fi
       if [ "$CHANGED_CONF" -eq 1 ] && [ -n "$CONF_TARGET" ] && [ -f "$STAGE/config.orig" ]; then
