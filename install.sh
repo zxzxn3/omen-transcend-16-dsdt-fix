@@ -4,7 +4,7 @@
 #
 # 用法:   sudo bash install.sh [选项] [dsdt.aml 的路径或 URL]
 #        -f, --force        别拦也别问：跳过「显式参数与本机不符」软警告，且跳过交互确认
-#        --rebuild          即使 .aml 未变化也强制重建 initramfs（恢复上次可能没建成的状态）
+#        --rebuild          即使 .aml 未变化也强制重建 initramfs
 #        --target <板/BIOS> 官方下拉补丁时指定目标，与 dsdt-fix/<target>/ 目录一致（如 8C4D/F.29）
 #        -h, --help         显示英文帮助
 #        --                 其后的参数一律视为 .aml 路径
@@ -73,7 +73,7 @@ on_exit() {
         mv -f "$STAGE/config.orig" "$CONF_TARGET" 2>/dev/null
         echo "  [OK] Restored $CONF_TARGET (reverted HOOKS edit)" >&2
       fi
-      echo "  Re-run install.sh (add --rebuild to force a rebuild) to try again." >&2
+      echo "  Re-run install.sh to try again." >&2
     fi
     # 清掉可能残留的同目录 .new 临时文件
     rm -f -- "$OVERRIDE_DIR/dsdt.aml.new" 2>/dev/null
@@ -103,8 +103,7 @@ Usage: sudo bash install.sh [OPTIONS] [dsdt.aml PATH or URL]
 Options:
   -f, --force      Do not stop or ask: skip the machine-match soft warning and
                    the interactive confirmation before applying/rebuilding.
-      --rebuild     Force an initramfs rebuild even if the override is unchanged
-                   (use to recover when a previous run may not have finished).
+      --rebuild     Force an initramfs rebuild even if the override is unchanged.
       --target ID   Board/BIOS for the official download, exactly as it appears
                    in the dsdt-fix/<board>/<bios>/ tree (e.g. 8C4D/F.29).
   -h, --help       Show this help and exit.
@@ -302,18 +301,21 @@ fi
 # ---- 7. 准备（不改任何真文件）----
 echo "[1/3] Preparing ..."
 
-# 7.1 收集 mkinitcpio 配置文件 + 判断 hook 现状（只读）
+# 7.1 收集配置文件 + 判断 hook 现状（只读）
+# 只自动改主 /etc/mkinitcpio.conf；若 HOOKS 只写在 .d 片段里 → 明确报错让用户手动。
 CONF_FILES=("$MKINITCPIO_CONF")
 for f in /etc/mkinitcpio.conf.d/*.conf; do
   [ -f "$f" ] && CONF_FILES+=("$f")
 done
 HOOK_OK=0
+MAIN_HAS_HOOKS=0
 for f in "${CONF_FILES[@]}"; do
   if grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$f" 2>/dev/null; then
     HOOK_OK=1
     break
   fi
 done
+grep -qE '^\s*HOOKS=\(' "$MKINITCPIO_CONF" 2>/dev/null && MAIN_HAS_HOOKS=1
 
 # 7.2 幂等门：文件相同 + hook 已在 + 没要求强制重建 → 无事可做
 if [ "$REBUILD" -ne 1 ] \
@@ -330,28 +332,24 @@ if [ -f "$OVERRIDE_DIR/dsdt.aml" ] && cmp -s "$SRC" "$OVERRIDE_DIR/dsdt.aml"; th
 fi
 NEED_CONF=0
 if [ "$HOOK_OK" -ne 1 ]; then
-  # 补 hook：只在 $STAGE 副本上 sed + 验证，apply 时才覆盖真文件
-  for f in "${CONF_FILES[@]}"; do
-    if grep -qE '^\s*HOOKS=\(' "$f" 2>/dev/null; then
-      cp -f "$f" "$STAGE/config.new"
-      if sed -E 's/^(HOOKS=\([^)]*\bbase)\b/\1 '"${HOOK_NAME}"'/' "$STAGE/config.new" \
-           > "$STAGE/config.new.tmp" \
-         && mv -f "$STAGE/config.new.tmp" "$STAGE/config.new" \
-         && grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$STAGE/config.new"; then
-        NEED_CONF=1
-        CONF_TARGET="$f"
-        cp -f "$f" "$STAGE/config.orig"   # 原件副本（重建失败还原用）
-        echo "  [OK] Will add ${HOOK_NAME} after 'base' in: $f"
-        break
-      else
-        echo "  [WARN] $f has HOOKS= but no 'base' to anchor on; skipped." >&2
-        rm -f -- "$STAGE/config.new" "$STAGE/config.new.tmp"
-      fi
-    fi
-  done
-  if [ "$NEED_CONF" -ne 1 ]; then
-    echo "Error: '${HOOK_NAME}' hook is missing and could not be added automatically." >&2
-    echo "       Add it to the HOOKS line of /etc/mkinitcpio.conf manually, then re-run." >&2
+  # 补 hook：只在 $STAGE 副本上 sed + 验证，apply 时才覆盖真文件（只自动改主配置文件）
+  if [ "$MAIN_HAS_HOOKS" -ne 1 ]; then
+    echo "Error: HOOKS is not defined in $MKINITCPIO_CONF (only in a .d fragment)." >&2
+    echo "       Add '${HOOK_NAME}' to that fragment's HOOKS line manually, then re-run." >&2
+    exit 1
+  fi
+  cp -f "$MKINITCPIO_CONF" "$STAGE/config.new"
+  if sed -E 's/^(HOOKS=\([^)]*\bbase)\b/\1 '"${HOOK_NAME}"'/' "$STAGE/config.new" \
+       > "$STAGE/config.new.tmp" \
+     && mv -f "$STAGE/config.new.tmp" "$STAGE/config.new" \
+     && grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$STAGE/config.new"; then
+    NEED_CONF=1
+    CONF_TARGET="$MKINITCPIO_CONF"
+    cp -f "$MKINITCPIO_CONF" "$STAGE/config.orig"   # 原件副本（重建失败还原用）
+    echo "  [OK] Will add ${HOOK_NAME} after 'base' in: $MKINITCPIO_CONF"
+  else
+    echo "Error: $MKINITCPIO_CONF has HOOKS= but no 'base' to anchor on." >&2
+    echo "       Add '${HOOK_NAME}' to its HOOKS line manually, then re-run." >&2
     exit 1
   fi
 fi

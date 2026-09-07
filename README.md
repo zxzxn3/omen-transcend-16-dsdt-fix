@@ -48,7 +48,7 @@ sudo bash install.sh --target 8C4D/F.29               # 官方：显式指定 �
 sudo bash install.sh /path/to/dsdt.aml                # 本地：直接用，不判断（可自编译）
 sudo bash install.sh --target 8C4D/F.29 /clone/of/this-repo     # 本地镜像/自建 base
 sudo bash install.sh --target 8C4D/F.29 https://example.com/base  # 远程镜像/换 raw_base
-sudo bash install.sh --rebuild                        # 强制重建（上次可能没建成时恢复）
+sudo bash install.sh --rebuild                        # 强制重建 initramfs（即使内容未变）
 ```
 
 安装器是两阶段：先准备（校验 DSDT 签名、暂存、交互确认），最后一刻才覆盖真文件并
