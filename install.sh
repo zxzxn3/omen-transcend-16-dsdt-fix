@@ -12,7 +12,7 @@
 #           2) 本脚本同目录的 dsdt.aml
 #           3) 否则按「本机 BIOS 版本」自动去仓库 dsdt-fix/<BIOS>/ 下载对应版本
 # 一行安装（在 CachyOS 上，无需先 clone/挂载；会自动检测 BIOS 并拉取对应补丁）：
-#   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/install.sh | sudo bash
 # 板号:   期望 8C4D（OMEN Transcend 16-u1xxx）。不一致 → 软警告：交互询问（默认否）/ 非交互安全中止；-f/--force 可忽略。
 # BIOS:   精确匹配 dsdt-fix/<BIOS>/；尚未收录 → [WARN] 自动回退到最近的已发布版本（FALLBACK_BIOSES）。
 # 功能:   把编译好的 dsdt.aml 装进 initramfs（含 acpi_override hook），然后重建 initramfs
@@ -28,7 +28,7 @@ set -euo pipefail
 # ---- 0. 常量与基本状态 ----
 # 本脚本涉及的仓库信息（官方 .aml 都按 dsdt-fix/<BIOS>/dsdt.aml 组织）。
 REPO_OWNER="zxzxn3"
-REPO_NAME="omen-transcend-16-u1024tx-f29-dsdt-fix"
+REPO_NAME="omen-transcend-16-dsdt-fix"
 REPO_BRANCH="main"
 RAW_BASE="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}"
 EXPECTED_BOARD="8C4D"            # OMEN Transcend 16-u1xxx 的板号（软警告用）

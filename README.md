@@ -31,7 +31,7 @@
 **一行远程安装**（自动检测 BIOS → 拉对应补丁）：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/install.sh | sudo bash
 ```
 
 **本地安装**（从仓库里跑，或指向任意 .aml）：
