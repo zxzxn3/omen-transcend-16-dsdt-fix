@@ -303,63 +303,21 @@ fi
 # ---- 7. 准备（不改任何真文件）----
 echo "[1/3] Preparing ..."
 
-# 7.1 收集配置文件 + 判断 hook 现状（只读）
-# 只自动改主 /etc/mkinitcpio.conf。还要识别各 preset 实际用哪个 config 构建：
-#   <preset>_config > ALL_config > 主 conf。若某 preset 用自定义 config 且缺 hook，
-#   无法自动加 → apply 前拒绝；主 conf 只在确实被用到时才自动加。
-
-# 某 config（含其同级 .d）是否已含 acpi_override
-conf_has_hook() { # <config 路径>
-  grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$1" 2>/dev/null && return 0
-  local f
-  for f in "$1".d/*.conf; do
-    [ -f "$f" ] || continue
-    grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$f" 2>/dev/null && return 0
-  done
-  return 1
-}
-
-# 打印各 preset 实际生效的 config（子 shell source preset）
-preset_configs() {
-  local preset p cfg
-  for preset in /etc/mkinitcpio.d/*.preset; do
-    [ -f "$preset" ] || continue
-    (
-      set +u
-      # shellcheck disable=SC1090
-      . "$preset" 2>/dev/null || true
-      for p in ${PRESETS[@]:-}; do
-        eval "cfg=\${${p}_config:-}"
-        [ -n "$cfg" ] || cfg="${ALL_config:-}"
-        [ -n "$cfg" ] || cfg="$MKINITCPIO_CONF"
-        printf '%s\n' "$cfg"
-      done
-    )
-  done
-}
-
-# 实际参与构建的 config 集合（去重；无 preset → 只用主 conf）
-EFF_CONFS=("$MKINITCPIO_CONF")
-if ls /etc/mkinitcpio.d/*.preset >/dev/null 2>&1; then
-  EFF_CONFS=()
-  while IFS= read -r cfg; do
-    [ -n "$cfg" ] || continue
-    dup=0
-    for c in "${EFF_CONFS[@]}"; do [ "$c" = "$cfg" ] && dup=1; done
-    [ "$dup" -eq 0 ] && EFF_CONFS+=("$cfg")
-  done < <(preset_configs)
-  [ "${#EFF_CONFS[@]}" -eq 0 ] && EFF_CONFS=("$MKINITCPIO_CONF")
-fi
-
-HOOK_OK=1
-for cfg in "${EFF_CONFS[@]}"; do
-  if ! conf_has_hook "$cfg"; then
-    HOOK_OK=0
+# 7.1 判断 hook 现状（只读）
+# 只自动改主 /etc/mkinitcpio.conf；补不进去/校验不过就明确报错让用户手动。
+# 至于“某 preset 用自定义 config、缺 hook 导致那个内核没吃到 override”这类布局，
+# 交给 9.5 在重建后统一兜底（任一镜像缺 override 即报错并回滚），不在此逐个前置探测。
+CONF_FILES=("$MKINITCPIO_CONF")
+for f in /etc/mkinitcpio.conf.d/*.conf; do
+  [ -f "$f" ] && CONF_FILES+=("$f")
+done
+HOOK_OK=0
+for f in "${CONF_FILES[@]}"; do
+  if grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$f" 2>/dev/null; then
+    HOOK_OK=1
     break
   fi
 done
-MAIN_HAS_HOOKS=0
-grep -qE '^\s*HOOKS=\(' "$MKINITCPIO_CONF" 2>/dev/null && MAIN_HAS_HOOKS=1
 
 # 7.2 幂等门：文件相同 + hook 已在 + 没要求强制重建 → 无事可做
 if [ "$REBUILD" -ne 1 ] \
@@ -376,21 +334,8 @@ if [ -f "$OVERRIDE_DIR/dsdt.aml" ] && cmp -s "$SRC" "$OVERRIDE_DIR/dsdt.aml"; th
 fi
 NEED_CONF=0
 if [ "$HOOK_OK" -ne 1 ]; then
-  # 1) 缺 hook 的非主 config（preset 自定义）→ 不自动改，apply 前拒绝并指路
-  for cfg in "${EFF_CONFS[@]}"; do
-    if ! conf_has_hook "$cfg" && [ "$cfg" != "$MKINITCPIO_CONF" ]; then
-      echo "Error: a preset builds from custom config '$cfg' which lacks the '${HOOK_NAME}' hook." >&2
-      echo "       Add '${HOOK_NAME}' to its HOOKS line manually, then re-run." >&2
-      exit 1
-    fi
-  done
-  # 2) 缺 hook 的只可能是主 conf → 补 hook：只在 $STAGE 副本上 sed + 验证，
-  #    apply 时才覆盖真文件（仍只自动改主配置文件）
-  if [ "$MAIN_HAS_HOOKS" -ne 1 ]; then
-    echo "Error: HOOKS is not defined in $MKINITCPIO_CONF (only in a .d fragment)." >&2
-    echo "       Add '${HOOK_NAME}' to that fragment's HOOKS line manually, then re-run." >&2
-    exit 1
-  fi
+  # 补 hook：只在 $STAGE 副本上 sed + 验证，apply 时才覆盖真文件（只自动改主配置文件）。
+  # 主 conf 没有可锚的 HOOKS=(...base...) 时，下面的 sed/校验会失败 → 统一报错让用户手动加。
   cp -f "$MKINITCPIO_CONF" "$STAGE/config.new"
   if sed -E 's/^(HOOKS=\([^)]*\bbase)\b/\1 '"${HOOK_NAME}"'/' "$STAGE/config.new" \
        > "$STAGE/config.new.tmp" \
@@ -403,8 +348,9 @@ if [ "$HOOK_OK" -ne 1 ]; then
     echo "  [OK] Will add ${HOOK_NAME} after 'base' in: $MKINITCPIO_CONF"
   else
     echo "Error: could not add '${HOOK_NAME}' into the HOOKS= list of $MKINITCPIO_CONF" >&2
-    echo "       (no 'base' anchor, or the edited config failed to parse/validate)." >&2
-    echo "       Add it to the HOOKS line manually, then re-run." >&2
+    echo "       (no 'HOOKS=(... base ...)' to anchor on, or the edited config failed to parse)." >&2
+    echo "       Add '${HOOK_NAME}' to the HOOKS of the config used to build your initramfs" >&2
+    echo "       (default: $MKINITCPIO_CONF; other presets: check /etc/mkinitcpio.d/*.preset), then re-run." >&2
     exit 1
   fi
 fi
@@ -494,10 +440,12 @@ if command -v lsinitcpio >/dev/null 2>&1; then
       echo "  [WARN] Override NOT found inside: $img" >&2
     fi
   done < <(preset_images)
-  # 确实查过 >=1 个镜像、却一个都不含 override → 硬失败（触发还原），别假装成功
-  if [ "$MISSING_IMGS" -gt 0 ] && [ "$VERIFIED_IMGS" -eq 0 ]; then
-    echo "Error: rebuilt initramfs does not contain the DSDT override (hook inactive)." >&2
-    echo "       Rolling back; check HOOKS and ${OVERRIDE_DIR}/ then re-run." >&2
+  # 任一重建出的镜像缺 override → 硬失败（触发还原），别假装成功
+  if [ "$MISSING_IMGS" -gt 0 ]; then
+    echo "Error: rebuilt initramfs does not contain the DSDT override." >&2
+    echo "       The image(s) listed above were built without kernel/firmware/acpi/dsdt.aml." >&2
+    echo "       Check that the config used by that preset has '${HOOK_NAME}' in its HOOKS and" >&2
+    echo "       that ${OVERRIDE_DIR}/dsdt.aml exists, then re-run. Rolling back." >&2
     exit 1
   fi
   if [ "$VERIFIED_IMGS" -eq 0 ]; then
