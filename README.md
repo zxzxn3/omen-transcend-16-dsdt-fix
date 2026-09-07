@@ -17,28 +17,37 @@ that cause Linux to:
 
 ## What's inside
 
-- [`dsdt-fix/`](dsdt-fix/) — the compiled DSDT override (`dsdt.aml`), patched
-  source, original tables, and an annotated `patch.diff` (3 changes, each with
-  problem / principle / source).
-- [`dsdt-fix/README.md`](dsdt-fix/README.md) — install / verify / revert instructions.
+- `install.sh` — auto-detecting installer at the repo root: reads your **board +
+  BIOS**, then routes to the matching `dsdt-fix/<BIOS>/` patch (or lists the
+  available versions if there is no exact match).
+- [`dsdt-fix/`](dsdt-fix/) — patches organized by BIOS version:
+  - [`dsdt-fix/F.29/`](dsdt-fix/F.29/) — the real **F.29** patch: `dsdt.aml`,
+    patched source, original tables, an annotated `patch.diff` (3 changes) and a
+    per-firmware README.
+  - `dsdt-fix/F.28/` — ⚠️ **fake** placeholder, only for testing the version
+    routing.
 - Diagnosis logs (`dmesg`, `journalctl`, installer log).
 
 ## Quick install (CachyOS / Arch + Limine)
 
-```bash
-sudo mkdir -p /etc/initcpio/acpi_override
-sudo cp dsdt-fix/dsdt.aml /etc/initcpio/acpi_override/
-# add `acpi_override` to HOOKS in /etc/mkinitcpio.conf
-sudo mkinitcpio -P
-sudo reboot          # do NOT use acpi=off / noapic
-```
-
-Or use the helper script (you mount `D:` yourself, then it installs and rebuilds):
+One-line remote install (auto-detects BIOS → pulls the matching patch):
 
 ```bash
-sudo mount /dev/nvme0n1p5 /mnt/d
-sudo bash dsdt-fix/install.sh /mnt/d/linux-hate-me/dsdt-fix/dsdt.aml
+curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/install.sh | sudo bash
 ```
+
+Local (from this repo, or point at any .aml):
+
+```bash
+sudo bash install.sh                     # auto: same-dir dsdt.aml → BIOS route
+sudo bash install.sh dsdt-fix/F.29/dsdt.aml
+sudo bash install.sh /path/to/dsdt.aml
+```
+
+The installer copies the `.aml` into `/etc/initcpio/acpi_override/`, ensures the
+`acpi_override` hook, backs up any previous override (timestamped, kept
+indefinitely), and rebuilds the initramfs (`limine-mkinitcpio` when interactive,
+`mkinitcpio -P` under `curl | bash`).
 
 ## Root cause
 
@@ -72,4 +81,4 @@ cross-verified against, the following public sources:
 
 诊断结论与社区仓库（j0hnwang、no-hands-hand、LauriSarap）及 Bugzilla #221847
 交叉验证一致。每处改动的「问题 / 原理 / 出处」详见
-[`dsdt-fix/patch.diff`](dsdt-fix/patch.diff) 内的注释。
+[`dsdt-fix/F.29/patch.diff`](dsdt-fix/F.29/patch.diff) 内的注释。
