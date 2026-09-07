@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =====================================================================
-# HP OMEN Transcend 16 (board 8C4D) DSDT override installer for
+# HP OMEN Transcend 16 DSDT override installer for
 # CachyOS/Arch + mkinitcpio (+ Limine). Target scope is deliberately narrow:
 # one machine family, the standard /etc/mkinitcpio.conf + *.preset layout,
 # and the acpi_override hook. Full rationale lives in the README.
@@ -122,7 +122,7 @@ fi
 
 # ---- pick the .aml: user operand, or official repo by --target / DMI ----
 if [ -n "$SRC" ]; then
-  echo "Using user-provided dsdt.aml: $SRC (no checks; assumed correct by user)."
+  echo "Using user-provided dsdt.aml: $SRC."
 else
   command -v curl >/dev/null 2>&1 || { echo "Error: downloading patches requires 'curl'." >&2; exit 1; }
   SYS_DMI=/sys/class/dmi/id
@@ -342,7 +342,6 @@ echo "     safety margin (noapic does not disable ACPI, so the override still ap
 echo "  2. After boot, verify the override is active:"
 echo '       dmesg | grep -i "ACPI: Override"      # expect: DSDT ... this is unsafe: tainting kernel'
 echo '       dmesg | grep -i AE_AML_OPERAND_TYPE   # expect: no output'
-echo "       (built-in speakers should also work)"
 echo "  3. Only after those pass, also remove 'noapic'."
 echo "If booting without acpi=off fails: re-add acpi=off noapic, remove"
 echo "  ${OVERRIDE_DIR}/dsdt.aml, drop '${HOOK_NAME}' from HOOKS in $MKINITCPIO_CONF,"
