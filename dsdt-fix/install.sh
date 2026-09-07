@@ -3,7 +3,7 @@
 # HP OMEN Transcend 16 (BIOS F.29) — DSDT override installer
 #
 # 用法:   sudo bash install.sh [dsdt.aml 的路径或 URL]
-# 默认:   自动解析 .aml：命令行参数 > 同目录 dsdt.aml > 仓库官方 dsdt.aml
+# 默认:   自动解析 .aml：参数 > 同目录 dsdt.aml > 询问/自动下载仓库官方 dsdt.aml
 # 远程:   sudo bash install.sh https://.../dsdt.aml   （会先下载到临时文件）
 # 一行安装（在 CachyOS 上，无需先 clone/挂载；.aml 会自动从仓库拉取）：
 #   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/dsdt-fix/install.sh | sudo bash
@@ -27,17 +27,26 @@ set -euo pipefail
 # 这样 SCRIPT_DIR 永远指向 install.sh 自己所在的文件夹。
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 仓库里官方维护的 dsdt.aml 地址（当「本地没有 .aml」时回退到这里，实现真正的一行安装）。
+# 仓库里官方维护的 dsdt.aml 地址（供「询问下载」或「远程一行安装自动下载」用）。
 DEFAULT_REMOTE_AML="https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/dsdt-fix/dsdt.aml"
 
 # .aml 来源按优先级取：
 #   1) 命令行第 1 个参数（本地路径或 http(s):// URL）
 #   2) 本脚本同目录的 dsdt.aml（本地 clone/复制场景）
-#   3) 仓库里的官方 dsdt.aml（远程 curl | bash 场景 → 这样一行安装不用带任何参数）
+#   3) 都没有 → 询问是否下载仓库里的官方 dsdt.aml
+#      · 交互终端（stdin 是 tty）→ 弹 Y/n 让你决定
+#      · 非交互（curl | bash，stdin 是管道、读不到输入）→ 不询问，直接下载
+#        （用户跑远程一行安装，意图本就是下载官方 .aml）
 if [ -n "${1:-}" ]; then
   SRC="$1"
 elif [ -f "$SCRIPT_DIR/dsdt.aml" ]; then
   SRC="$SCRIPT_DIR/dsdt.aml"
+elif [ -t 0 ]; then
+  read -r -p "No local dsdt.aml found. Download the maintained one from GitHub? [Y/n] " REPLY
+  case "$REPLY" in
+    n|N|no|No|NO) echo "Aborted." >&2; exit 1 ;;
+    *) SRC="$DEFAULT_REMOTE_AML" ;;
+  esac
 else
   SRC="$DEFAULT_REMOTE_AML"
 fi
@@ -84,30 +93,28 @@ if [ ! -f "$SRC" ]; then
 fi
 
 # ---- 3. 备份旧 override + 复制新的 .aml ----
-# 若目标已有一个 dsdt.aml（= 上次装过的 override），先把旧文件留档成 dsdt.aml.bakN，
-# 再让新文件覆盖。编号规则：最新的叫 bak1、越旧数字越大，超过上限的最老备份会被丢掉。
-# 这样每次重装/换版本后都留了几份历史，随时能回滚到上一个能用的版本。
+# 若目标已有一个 dsdt.aml（= 上次装过的 override），先把旧文件留档成 dsdt.aml.bakN，再让新文件覆盖。
+# 编号规则：最新永远是 bak1，越旧数字越大；保留无限份，从不删除任何历史。
 echo "[1/3] Installing dsdt.aml (with backup) ..."
 mkdir -p "$OVERRIDE_DIR"        # -p：目标目录已存在也不报错（相当于「确保存在」）
 
-BACKUP_MAX=5   # 最多保留 5 份历史备份（bak1..bak5）
 if [ -f "$OVERRIDE_DIR/dsdt.aml" ]; then
-  # 从最老的往下处理：先删掉超上限的最老备份，再把 bakN 依次改名为 bakN+1，腾出 bak1。
-  # 例如已有 bak1..bak5：删 bak5 → bak4→bak5 → bak3→bak4 → bak2→bak3 → bak1→bak2。
-  i=$BACKUP_MAX
-  while [ "$i" -ge 1 ]; do
-    if [ -f "$OVERRIDE_DIR/dsdt.aml.bak$i" ]; then
-      if [ "$i" -eq "$BACKUP_MAX" ]; then
-        rm -f "$OVERRIDE_DIR/dsdt.aml.bak$i"          # 最老的那份，丢
-      else
-        mv -f "$OVERRIDE_DIR/dsdt.aml.bak$i" "$OVERRIDE_DIR/dsdt.aml.bak$((i+1))"
-      fi
-    fi
-    i=$((i-1))
+  # 1) 先找出当前最大的备份编号（从 bak1 往上数到断档为止）
+  MAXBAK=0
+  i=1
+  while [ -f "$OVERRIDE_DIR/dsdt.aml.bak$i" ]; do
+    MAXBAK=$i
+    i=$((i+1))
   done
-  # 现在的 dsdt.aml 即将被覆盖，先留一份为 bak1
+  # 2) 从最老（编号最大）往最新（bak1）依次后移一位：bakN -> bakN+1
+  #    从高处往下移，保证不会覆盖还没移走的文件；不移除任何备份 → 无限保留
+  while [ "$MAXBAK" -ge 1 ]; do
+    mv -f "$OVERRIDE_DIR/dsdt.aml.bak$MAXBAK" "$OVERRIDE_DIR/dsdt.aml.bak$((MAXBAK+1))"
+    MAXBAK=$((MAXBAK-1))
+  done
+  # 3) 现在的 dsdt.aml 即将被覆盖，先留一份为 bak1
   cp -f "$OVERRIDE_DIR/dsdt.aml" "$OVERRIDE_DIR/dsdt.aml.bak1"
-  echo "  [OK] Previous override backed up -> dsdt.aml.bak1"
+  echo "  [OK] Previous override backed up -> dsdt.aml.bak1 (kept indefinitely)"
 fi
 
 cp -v "$SRC" "$OVERRIDE_DIR/dsdt.aml"   # -v：verbose，打印它复制了哪个文件
