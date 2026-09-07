@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =====================================================================
-# HP OMEN Transcend 16 (board 8C4D / u1xxx) — DSDT override installer
+# DSDT override installer
 #
-# 用法:   sudo bash install.sh [选项] [dsdt.aml 的路径或 URL]
-#        -f, --force        别拦也别问：跳过「显式参数与本机不符」软警告，且跳过交互确认
-#        --rebuild          即使 .aml 未变化也强制重建 initramfs
-#        --target <板/BIOS> 官方下拉补丁时指定目标，与 dsdt-fix/<target>/ 目录一致（如 8C4D/F.29）
-#        -h, --help         显示英文帮助
+# Usage:   sudo bash install.sh [options] [path or URL to dsdt.aml]
+#        -f, --force        Do not ask and do not stop: skip the soft warning about explicit parameters not matching the local machine, and skip interactive confirmation
+#        --rebuild          Force rebuild of initramfs even if .aml has not changed
+#        --target <board/BIOS> Specify the target when pulling official patches, consistent with the dsdt-fix/<target>/ directory (e.g., 8C4D/F.29)
+#        -h, --help         Show English help
 #        --                 其后的参数一律视为 .aml 路径
 # 退出码: 0 成功 / 1 运行错误（找不到补丁/下载失败/校验失败/重建失败）/ 2 用法错误
 # 来源:   --target 可选；给了就显式指定，不给就按本机 DMI 自动检测（target=<board>/<bios>）。
