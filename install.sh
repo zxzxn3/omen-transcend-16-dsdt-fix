@@ -17,6 +17,7 @@
 # BIOS:   无精确匹配时，主动查询仓库里已有的版本让你挑（交互）；非交互则报错并列出可选版本。
 # 功能:   把编译好的 dsdt.aml 装进 initramfs（含 acpi_override hook），然后重建 initramfs
 # 幂等:   可重复运行，不会重复插入 hook；同一份 .aml 已装则跳过。
+# 安全:   复制/改配置后若中途退出（报错/Ctrl-C），自动回滚到改动前状态。
 # 注意:   curl | bash 时 stdin 不是终端，脚本会自动退回非交互的 mkinitcpio -P。
 # =====================================================================
 set -euo pipefail
@@ -40,6 +41,48 @@ HOOK_NAME="acpi_override"                    # 负责把上面的 .aml 打进 in
 
 # stdin 是不是终端？决定能否交互（读键盘输入）。
 if [ -t 0 ]; then INTERACTIVE=1; else INTERACTIVE=0; fi
+
+# ---- 0.6 回滚与清理 ----
+# 目标：安装中途退出（报错/Ctrl-C/TERM）时，把系统还原到「改动前」，
+#       避免留下「override 已复制但 initramfs 未重建」的半成品状态。
+# 规则：DONE=1 表示完整成功（重建 initramfs 也成功）；
+#       MUTATED=1 表示已对系统做过修改；两者缺一即视为未完成 → 回滚。
+DONE=0
+MUTATED=0
+DIR_CREATED=0
+PRIOR_AML=""    # 改动前已存在的 dsdt.aml 快照（临时副本）；空 = 原本没有
+CONF_FILE=""    # 本次实际改过的 mkinitcpio 配置文件
+CONF_SNAP=""    # 该配置文件改前的快照
+TMP_AML=""      # 下载的临时 .aml（退出时清理）
+
+on_exit() {
+  set +e
+  # 1) 改了系统但没装完 → 还原
+  if [ "$DONE" -ne 1 ] && [ "$MUTATED" -eq 1 ]; then
+    echo "  [WARN] Install did not finish (interrupted) — restoring previous state." >&2
+    if [ -n "$PRIOR_AML" ]; then
+      cp -f "$PRIOR_AML" "$OVERRIDE_DIR/dsdt.aml" 2>/dev/null
+      echo "  [OK] Restored previous override -> $OVERRIDE_DIR/dsdt.aml" >&2
+    else
+      rm -f -- "$OVERRIDE_DIR/dsdt.aml" 2>/dev/null
+      echo "  [OK] Removed the copied override (there was none before)." >&2
+    fi
+    if [ -n "$CONF_FILE" ] && [ -n "$CONF_SNAP" ]; then
+      cp -f "$CONF_SNAP" "$CONF_FILE" 2>/dev/null
+      echo "  [OK] Reverted HOOKS edit in $CONF_FILE" >&2
+    fi
+    # 若 override 目录是我们本次新建的且已空 → 删掉
+    if [ "$DIR_CREATED" -eq 1 ] && [ -d "$OVERRIDE_DIR" ]; then
+      rmdir "$OVERRIDE_DIR" 2>/dev/null
+    fi
+    echo "  Re-run install.sh to try again." >&2
+  fi
+  # 2) 清理临时文件（下载的 aml / 快照）
+  rm -f -- "${TMP_AML:-}" "${PRIOR_AML:-}" "${CONF_SNAP:-}"
+}
+trap on_exit EXIT
+trap 'exit 130' INT     # Ctrl-C：先触发 on_exit 回滚再退出
+trap 'exit 143' TERM
 
 # ---- 0.5 参数解析（GNU 命令行惯例）----
 # 规范遵循：
@@ -240,8 +283,7 @@ fi
 # ---- 5. 远程 URL → 下载到临时文件 ----
 # TMP_AML 用 trap 在退出时自动清理（curl | bash 也不残留）。
 if [[ "$SRC" == http://* || "$SRC" == https://* ]]; then
-  TMP_AML="$(mktemp --suffix=.aml 2>/dev/null || mktemp)"
-  trap 'rm -f -- "${TMP_AML:-}"' EXIT
+  TMP_AML="$(mktemp --suffix=.aml 2>/dev/null || mktemp)"   # 退出时由 on_exit 统一清理
   echo "[0/3] Downloading dsdt.aml from: $SRC"
   # curl 参数: -f 出错即失败  -s 静默  -S 出错仍显示  -L 跟随重定向  -o 输出到文件
   curl -fsSL "$SRC" -o "$TMP_AML" || { echo "Error: download failed: $SRC" >&2; exit 1; }
@@ -257,12 +299,21 @@ fi
 
 # ---- 7. 若已装同一份 → 跳过；否则备份旧 override + 复制新的 ----
 echo "[1/3] Installing dsdt.aml ..."
-mkdir -p "$OVERRIDE_DIR"        # -p：目标目录已存在也不报错
+if [ ! -d "$OVERRIDE_DIR" ]; then
+  DIR_CREATED=1
+  mkdir -p "$OVERRIDE_DIR"
+fi
 
 # cmp -s：逐字节比较。已装的就是这份 → 直接退出，省得白重建 initramfs。
 if [ -f "$OVERRIDE_DIR/dsdt.aml" ] && cmp -s "$SRC" "$OVERRIDE_DIR/dsdt.aml"; then
   echo "  [OK] Installed dsdt.aml is already identical — nothing to do."
   exit 0
+fi
+
+# 改动前先存快照（供中途退出时 on_exit 还原）
+if [ -f "$OVERRIDE_DIR/dsdt.aml" ]; then
+  PRIOR_AML="$(mktemp 2>/dev/null || mktemp)"
+  cp -f "$OVERRIDE_DIR/dsdt.aml" "$PRIOR_AML"
 fi
 
 # 覆盖前备份旧的：带时间戳、只增不滚 → 无限历史，每次只加一个新文件。
@@ -273,6 +324,7 @@ if [ -f "$OVERRIDE_DIR/dsdt.aml" ]; then
 fi
 
 cp -f "$SRC" "$OVERRIDE_DIR/dsdt.aml"    # 复制新 override（前面已做备份/去重）
+MUTATED=1                                  # 此后若中途退出，on_exit 会回滚
 echo "  [OK] Installed -> $OVERRIDE_DIR/dsdt.aml"
 
 # ---- 8. 确保 mkinitcpio 配置里启用了 acpi_override hook ----
@@ -304,12 +356,17 @@ if [ "$HOOK_OK" -ne 1 ]; then
       # sed -i -E 's/^(HOOKS=\([^)]*\bbase)\b/\1 acpi_override/'  在 base 后插 hook。
       # 关键：若文件里没有 base，sed 不改动但仍返回 0（假成功），
       # 所以用「sed && 事后 grep 复查」判断是否真的插进去了。
+      # 改动该配置文件前先存快照；sed 没成功则丢弃（不留无谓快照）
+      CONF_SNAP_TMP="$(mktemp 2>/dev/null || mktemp)"
+      cp -f "$f" "$CONF_SNAP_TMP"
       if sed -i -E 's/^(HOOKS=\([^)]*\bbase)\b/\1 '"${HOOK_NAME}"'/' "$f" \
          && grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$f"; then
+        CONF_FILE="$f"; CONF_SNAP="$CONF_SNAP_TMP"
         echo "  [OK] Inserted ${HOOK_NAME} right after 'base' in: $f"
         INSERTED=1
         break
       else
+        rm -f -- "$CONF_SNAP_TMP"    # 没改成功 → 丢弃快照
         echo "  [WARN] $f has HOOKS= but no 'base' to anchor on; skipped." >&2
       fi
     fi
@@ -328,7 +385,8 @@ if [ "$INTERACTIVE" -eq 1 ] && command -v limine-mkinitcpio >/dev/null 2>&1; the
   limine-mkinitcpio
 else
   mkinitcpio -P
-fi
+fi || { echo "Error: initramfs rebuild failed." >&2; exit 1; }
+DONE=1   # 重建成功 → 标记完成；此前任何失败退出都会触发 on_exit 回滚
 
 echo ""
 echo "Done. You can reboot now (do NOT use acpi=off / noapic)."
