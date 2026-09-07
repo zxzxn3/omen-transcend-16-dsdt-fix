@@ -2,10 +2,15 @@
 # =====================================================================
 # HP OMEN Transcend 16 (BIOS F.29) — DSDT override installer
 #
-# 用法:   sudo bash install.sh [dsdt.aml 的路径]
+# 用法:   sudo bash install.sh [dsdt.aml 的路径或 URL]
 # 默认:   不传参数时，自动使用「本脚本所在目录」下的 dsdt.aml
+# 远程:   sudo bash install.sh https://.../dsdt.aml   （会先下载到临时文件）
+# 一行安装（在 CachyOS 上，无需先 clone/挂载）：
+#   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/dsdt-fix/install.sh \
+#     | sudo bash -s -- https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/dsdt-fix/dsdt.aml
 # 功能:   把编译好的 dsdt.aml 装进 initramfs（含 acpi_override hook），然后重建 initramfs
 # 幂等:   可重复运行，不会重复插入 hook
+# 注意:   curl | bash 时 stdin 不是终端，脚本会自动退回非交互的 mkinitcpio -P
 #
 # 本脚本从「已编译好的 .aml」开始，负责的是纯机械的安装部分；
 # 之前「怎么改代码、怎么编译」的判断工作不在这里。
@@ -25,11 +30,33 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 第 1 个参数（$1）给了就用它；没给就用「同目录下的 dsdt.aml」。
 # 之所以默认同目录：你能执行本脚本，就说明脚本和 .aml 基本是放在一起被复制/挂载过来的。
+# 也支持直接传 http(s):// URL —— 供「一行 curl | bash」远程安装使用。
 SRC="${1:-$SCRIPT_DIR/dsdt.aml}"
 
 OVERRIDE_DIR="/etc/initcpio/acpi_override"  # initramfs 里放 DSDT 覆盖文件的固定目录
 MKINITCPIO_CONF="/etc/mkinitcpio.conf"       # mkinitcpio 主配置文件
 HOOK_NAME="acpi_override"                    # 负责把上面的 .aml 打进 initramfs 的 hook 名
+
+# ---- 0b. 远程 URL 支持 ----
+# 若 SRC 以 http(s):// 开头，先 curl 下载到临时文件，再把 SRC 指向它。
+# TMP_AML 用 trap 在脚本退出时自动清理，避免 curl | bash 方式下残留垃圾。
+# [[ == http://* ]] 里的 * 是通配符，属于 bash 的模式匹配（比 case 更直观）。
+IS_REMOTE=0
+if [[ "$SRC" == http://* || "$SRC" == https://* ]]; then
+  IS_REMOTE=1
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "Error: remote .aml requires 'curl' (sudo pacman -S curl)." >&2
+    exit 1
+  fi
+  # mktemp 建一个唯一临时文件；--suffix=.aml 让后缀对（部分旧版不支持则退回默认）。
+  TMP_AML="$(mktemp --suffix=.aml 2>/dev/null || mktemp)"
+  # EXIT 陷阱：无论正常退出还是出错，都会删掉这个临时文件。${TMP_AML:-} 的 :- 是防 set -u 报错。
+  trap 'rm -f -- "${TMP_AML:-}"' EXIT
+  echo "[0/3] Downloading dsdt.aml from: $SRC"
+  # curl 参数: -f 出错即失败(不吐 HTML)  -s 静默  -S 出错时仍显示错误  -L 跟随重定向  -o 输出到文件
+  curl -fsSL "$SRC" -o "$TMP_AML" || { echo "Error: download failed: $SRC" >&2; exit 1; }
+  SRC="$TMP_AML"
+fi
 # ---------------------------------------------------------------
 
 # ---- 1. 必须是 root ----
@@ -111,13 +138,15 @@ fi
 
 # ---- 5. 重建 initramfs ----
 echo "[3/3] Rebuilding initramfs ..."
-# CachyOS 配 Limine 引导器时用 limine-mkinitcpio（它会弹出 Y/N 让你选要重建哪个内核）。
-# 注意: 不要给它喂 </dev/null —— 它需要交互输入，我们要保留终端，让用户自己敲 Y。
-if command -v limine-mkinitcpio >/dev/null 2>&1; then
-  # command -v: 检查系统里有没有这个命令
+# 关键判断: -t 0 检查「标准输入(stdin)是不是终端」。
+#   本地跑 (sudo bash install.sh)  → stdin 是终端 → 可交互，优先用 limine-mkinitcpio（会弹 Y/N 让你选内核）
+#   curl | bash 远程安装           → stdin 是管道，不是终端 → Y/N 读不到输入会卡死，所以退回非交互的 mkinitcpio -P
+# mkinitcpio -P 会重建所有内核预设，acpi_override hook 照样会把 .aml 打进去，效果相同。
+if [ -t 0 ] && command -v limine-mkinitcpio >/dev/null 2>&1; then
+  # command -v: 检查系统里有没有这个命令（有 limine 且可交互才用）
   limine-mkinitcpio
 else
-  # 没有 limine-mkinitcpio 就退回标准 mkinitcpio
+  # 非交互 或 没有 limine-mkinitcpio 时退回标准 mkinitcpio
   # -P : 重建「所有预设」，即 /etc/mkinitcpio.d/ 里每个 .preset 都建一遍
   mkinitcpio -P
 fi

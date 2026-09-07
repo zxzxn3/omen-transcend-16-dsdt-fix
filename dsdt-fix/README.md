@@ -63,6 +63,16 @@ sudo mount /dev/nvme0n1p5 /mnt/d
 sudo bash install.sh /mnt/d/linux-hate-me/dsdt-fix/dsdt.aml
 ```
 
+### 一键远程安装（curl | bash，无需先 clone/挂载）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/dsdt-fix/install.sh \
+  | sudo bash -s -- https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/dsdt-fix/dsdt.aml
+```
+
+> 远程方式下 stdin 是管道而非终端，脚本会自动用非交互的 `mkinitcpio -P` 重建
+> （效果相同，只是不弹 Y/N 让你选内核）。本机交互跑仍用 `limine-mkinitcpio`。
+
 ## 验证
 
 ```bash
