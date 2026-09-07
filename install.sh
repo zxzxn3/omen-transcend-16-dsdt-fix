@@ -3,10 +3,11 @@
 # HP OMEN Transcend 16 (board 8C4D / u1xxx) — DSDT override installer
 #
 # 用法:   sudo bash install.sh [选项] [dsdt.aml 的路径或 URL]
-#        -f, --force   忽略「板号不符」警告（默认：交互询问[默认否]；非交互安全中止）
-#        -h, --help    显示英文帮助
-#        --           其后的参数一律视为 .aml 路径
-# 退出码: 0 成功 / 1 运行错误（如板号中止/下载失败）/ 2 用法错误
+#        -f, --force    忽略「板号不符」警告（默认：交互询问[默认否]；非交互安全中止）
+#        --rebuild      即使 .aml 未变化也强制重建 initramfs（恢复上次可能没建成的状态）
+#        -h, --help     显示英文帮助
+#        --            其后的参数一律视为 .aml 路径
+# 退出码: 0 成功 / 1 运行错误（板号中止/下载失败/校验失败/重建失败）/ 2 用法错误
 # 默认:   自动解析 .aml（优先级）：
 #           1) 命令行第一个非选项参数（本地路径或 http(s):// URL）
 #           2) 本脚本同目录的 dsdt.aml
@@ -16,8 +17,9 @@
 # 板号:   期望 8C4D（OMEN Transcend 16-u1xxx）。不一致 → 软警告：交互询问（默认否）/ 非交互安全中止；-f/--force 可忽略。
 # BIOS:   精确匹配 dsdt-fix/<BIOS>/；尚未收录 → [WARN] 自动回退到最近的已发布版本（FALLBACK_BIOSES）。
 # 功能:   把编译好的 dsdt.aml 装进 initramfs（含 acpi_override hook），然后重建 initramfs
-# 幂等:   可重复运行，不会重复插入 hook；同一份 .aml 已装则跳过。
-# 安全:   复制/改配置后若中途退出（报错/Ctrl-C），自动回滚到改动前状态。
+# 幂等:   同补丁已装 + hook 已在 → 无事可做(exit 0)；加 --rebuild 可强制重建。
+# 安全:   两阶段：准备阶段不改真文件；重建前最后一刻才 apply；中断/重建失败自动还原；
+#         所有中间文件退出时清理，不残留。
 # 注意:   curl | bash 时 stdin 不是终端，脚本会自动退回非交互的 mkinitcpio -P。
 # =====================================================================
 set -euo pipefail
@@ -44,46 +46,46 @@ HOOK_NAME="acpi_override"                    # 负责把上面的 .aml 打进 in
 # stdin 是不是终端？决定能否交互（读键盘输入）。
 if [ -t 0 ]; then INTERACTIVE=1; else INTERACTIVE=0; fi
 
-# ---- 0.6 回滚与清理 ----
-# 目标：安装中途退出（报错/Ctrl-C/TERM）时，把系统还原到「改动前」，
-#       避免留下「override 已复制但 initramfs 未重建」的半成品状态。
-# 规则：DONE=1 表示完整成功（重建 initramfs 也成功）；
-#       MUTATED=1 表示已对系统做过修改；两者缺一即视为未完成 → 回滚。
-DONE=0
-MUTATED=0
-DIR_CREATED=0
-PRIOR_AML=""    # 改动前已存在的 dsdt.aml 快照（临时副本）；空 = 原本没有
-CONF_FILE=""    # 本次实际改过的 mkinitcpio 配置文件
-CONF_SNAP=""    # 该配置文件改前的快照
-TMP_AML=""      # 下载的临时 .aml（退出时清理）
+# ---- 0.6 两阶段基础设施：暂存目录 + 窄兜底还原 + 清理 ----
+# 准备阶段的所有中间物都放 $STAGE（mktemp -d），不改任何真文件；
+# 只有进入 apply（覆盖真文件）之后、重建成功之前异常退出，才需要还原。
+# 规则：BUILT=1 表示 initramfs 重建成功；CHANGED_AML/CONF 表示已覆盖真文件。
+#       BUILT≠1 且有过覆盖 → 用 $STAGE 里的原件副本还原。
+BUILT=0
+CHANGED_AML=0
+CHANGED_CONF=0
+CONF_TARGET=""    # apply 阶段将被覆盖的 mkinitcpio 配置文件
+STAGE=""          # 暂存目录（下载/副本/原件快照都放这，退出时整目录删除）
 
 on_exit() {
   set +e
-  # 1) 改了系统但没装完 → 还原
-  if [ "$DONE" -ne 1 ] && [ "$MUTATED" -eq 1 ]; then
-    echo "  [WARN] Install did not finish (interrupted) — restoring previous state." >&2
-    if [ -n "$PRIOR_AML" ]; then
-      cp -f "$PRIOR_AML" "$OVERRIDE_DIR/dsdt.aml" 2>/dev/null
-      echo "  [OK] Restored previous override -> $OVERRIDE_DIR/dsdt.aml" >&2
-    else
-      rm -f -- "$OVERRIDE_DIR/dsdt.aml" 2>/dev/null
-      echo "  [OK] Removed the copied override (there was none before)." >&2
+  if [ "$BUILT" -ne 1 ]; then
+    if [ "$CHANGED_AML" -eq 1 ] || { [ "$CHANGED_CONF" -eq 1 ] && [ -f "$STAGE/config.orig" ]; }; then
+      echo "  [WARN] Install did not finish (interrupted) — restoring previous state." >&2
+      if [ "$CHANGED_AML" -eq 1 ]; then
+        if [ -f "$STAGE/dsdt.orig" ]; then
+          mv -f "$STAGE/dsdt.orig" "$OVERRIDE_DIR/dsdt.aml" 2>/dev/null
+          echo "  [OK] Restored previous override -> $OVERRIDE_DIR/dsdt.aml" >&2
+        else
+          rm -f -- "$OVERRIDE_DIR/dsdt.aml" 2>/dev/null
+          echo "  [OK] Removed the copied override (there was none before)." >&2
+        fi
+      fi
+      if [ "$CHANGED_CONF" -eq 1 ] && [ -n "$CONF_TARGET" ] && [ -f "$STAGE/config.orig" ]; then
+        mv -f "$STAGE/config.orig" "$CONF_TARGET" 2>/dev/null
+        echo "  [OK] Restored $CONF_TARGET (reverted HOOKS edit)" >&2
+      fi
+      echo "  Re-run install.sh (add --rebuild to force a rebuild) to try again." >&2
     fi
-    if [ -n "$CONF_FILE" ] && [ -n "$CONF_SNAP" ]; then
-      cp -f "$CONF_SNAP" "$CONF_FILE" 2>/dev/null
-      echo "  [OK] Reverted HOOKS edit in $CONF_FILE" >&2
-    fi
-    # 若 override 目录是我们本次新建的且已空 → 删掉
-    if [ "$DIR_CREATED" -eq 1 ] && [ -d "$OVERRIDE_DIR" ]; then
-      rmdir "$OVERRIDE_DIR" 2>/dev/null
-    fi
-    echo "  Re-run install.sh to try again." >&2
+    # 清掉可能残留的同目录 .new 临时文件
+    rm -f -- "$OVERRIDE_DIR/dsdt.aml.new" 2>/dev/null
+    [ -n "$CONF_TARGET" ] && rm -f -- "$CONF_TARGET.new" 2>/dev/null
   fi
-  # 2) 清理临时文件（下载的 aml / 快照）
-  rm -f -- "${TMP_AML:-}" "${PRIOR_AML:-}" "${CONF_SNAP:-}"
+  # 删除整个暂存目录（下载的 aml / 各副本 / 原件快照）
+  [ -n "$STAGE" ] && rm -rf -- "$STAGE"
 }
 trap on_exit EXIT
-trap 'exit 130' INT     # Ctrl-C：先触发 on_exit 回滚再退出
+trap 'exit 130' INT     # Ctrl-C：先触发 on_exit（还原+清理）再退出
 trap 'exit 143' TERM
 
 # ---- 0.5 参数解析（POSIX 惯例：选项在前，操作数在后）----
@@ -91,6 +93,7 @@ trap 'exit 143' TERM
 #   - -- 终止选项解析：其后一律视为操作数（可安装以 - 开头的 .aml 文件）
 #   - 操作数至多一个 = dsdt.aml 路径或 URL
 FORCE=0
+REBUILD=0
 SRC=""
 
 show_usage() {
@@ -99,6 +102,8 @@ Usage: sudo bash install.sh [OPTIONS] [dsdt.aml PATH or URL]
 
 Options:
   -f, --force   Bypass the board-mismatch safety check and force install.
+      --rebuild  Force an initramfs rebuild even if the override is unchanged
+                (use to recover when a previous run may not have finished).
   -h, --help    Show this help and exit.
   --            Treat all remaining arguments as the .aml operand.
 
@@ -126,6 +131,7 @@ usage_err() {
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -f|--force) FORCE=1; shift ;;
+    --rebuild)  REBUILD=1; shift ;;
     -h|--help)  show_usage; exit 0 ;;
     --)         shift; break ;;      # 其后全部视为操作数
     -*)         usage_err "unknown option: $1" ;;
@@ -144,6 +150,14 @@ fi
 if [ "$(id -u)" -ne 0 ]; then
   echo "Error: please run with sudo." >&2
   exit 1
+fi
+
+# ---- 1.5 单实例锁 ----
+# 防止两个安装器同时跑（会抢配置/抢重建）。flock 是 util-linux 自带；
+# 没有 flock 或没有 /run/lock 的环境（如 Git Bash 沙箱）→ 跳过锁，功能不受影响。
+if [ -d /run/lock ] && command -v flock >/dev/null 2>&1; then
+  exec 9>/run/lock/dsdt-override.lock || { echo "Error: cannot open the lock file." >&2; exit 1; }
+  flock -n 9 || { echo "Error: another dsdt-override install is already running." >&2; exit 1; }
 fi
 
 # ---- 2. 检测本机 板号 + BIOS 版本（sysfs，普通用户可读）----
@@ -226,114 +240,135 @@ else
   fi
 fi
 
-# ---- 5. 远程 URL → 下载到临时文件 ----
-# TMP_AML 用 trap 在退出时自动清理（curl | bash 也不残留）。
+# ---- 5. 暂存目录 + 远程 URL 下载 ----
+# 所有中间物（下载的 aml、配置副本、原件快照）都收进 $STAGE，退出时整目录删除。
+STAGE="$(mktemp -d 2>/dev/null || mktemp -d /tmp/dsdt-override.XXXXXX)"
 if [[ "$SRC" == http://* || "$SRC" == https://* ]]; then
-  TMP_AML="$(mktemp --suffix=.aml 2>/dev/null || mktemp)"   # 退出时由 on_exit 统一清理
   echo "[0/3] Downloading dsdt.aml from: $SRC"
   # curl 参数: -f 出错即失败  -s 静默  -S 出错仍显示  -L 跟随重定向  -o 输出到文件
-  curl -fsSL "$SRC" -o "$TMP_AML" || { echo "Error: download failed: $SRC" >&2; exit 1; }
-  SRC="$TMP_AML"
+  curl -fsSL "$SRC" -o "$STAGE/dl.aml" || { echo "Error: download failed: $SRC" >&2; exit 1; }
+  SRC="$STAGE/dl.aml"
 fi
 
-# ---- 6. 源 .aml 必须存在 ----
+# ---- 6. 源必须存在 且 是有效 DSDT ----
 if [ ! -f "$SRC" ]; then
   echo "Error: dsdt.aml not found at: $SRC" >&2
   echo "Pass the path explicitly, e.g.:  sudo bash install.sh /path/to/dsdt.aml" >&2
   exit 1
 fi
-
-# ---- 7. 若已装同一份 → 跳过；否则备份旧 override + 复制新的 ----
-echo "[1/3] Installing dsdt.aml ..."
-if [ ! -d "$OVERRIDE_DIR" ]; then
-  DIR_CREATED=1
-  mkdir -p "$OVERRIDE_DIR"
+# 前 4 字节应为 "DSDT" 签名：拦住抓错的 HTML 页 / 传错文件，避免坏表进 initramfs。
+if [ "$(head -c4 "$SRC" 2>/dev/null)" != "DSDT" ]; then
+  echo "Error: not a valid DSDT table (missing 'DSDT' signature): $SRC" >&2
+  exit 1
 fi
 
-# cmp -s：逐字节比较。已装的就是这份 → 直接退出，省得白重建 initramfs。
-if [ -f "$OVERRIDE_DIR/dsdt.aml" ] && cmp -s "$SRC" "$OVERRIDE_DIR/dsdt.aml"; then
-  echo "  [OK] Installed dsdt.aml is already identical — nothing to do."
-  exit 0
-fi
+# ---- 7. 准备（不改任何真文件）----
+echo "[1/3] Preparing ..."
 
-# 改动前先存快照（供中途退出时 on_exit 还原）
-if [ -f "$OVERRIDE_DIR/dsdt.aml" ]; then
-  PRIOR_AML="$(mktemp 2>/dev/null || mktemp)"
-  cp -f "$OVERRIDE_DIR/dsdt.aml" "$PRIOR_AML"
-fi
-# 快照就绪后立即「武装」回滚：此后任何一步失败（含 cp 中途写坏）都会还原
-MUTATED=1
-
-# 覆盖前备份旧的：带时间戳、只增不滚 → 无限历史，每次只加一个新文件。
-if [ -f "$OVERRIDE_DIR/dsdt.aml" ]; then
-  STAMP="$(date +%Y%m%d-%H%M%S)"
-  cp -f "$OVERRIDE_DIR/dsdt.aml" "$OVERRIDE_DIR/dsdt.aml.bak-$STAMP"
-  echo "  [OK] Previous override backed up -> dsdt.aml.bak-$STAMP"
-fi
-
-cp -f "$SRC" "$OVERRIDE_DIR/dsdt.aml"    # 复制新 override（前面已做备份/去重）
-echo "  [OK] Installed -> $OVERRIDE_DIR/dsdt.aml"
-
-# ---- 8. 确保 mkinitcpio 配置里启用了 acpi_override hook ----
-echo "[2/3] Checking mkinitcpio HOOKS ..."
-
-# 收集所有可能写 HOOKS= 的配置文件：主配置 + /etc/mkinitcpio.conf.d/ 下的分片。
+# 7.1 收集 mkinitcpio 配置文件 + 判断 hook 现状（只读）
 CONF_FILES=("$MKINITCPIO_CONF")
 for f in /etc/mkinitcpio.conf.d/*.conf; do
   [ -f "$f" ] && CONF_FILES+=("$f")
 done
-
-# grep 参数说明:
-#   -q : quiet  -E : 扩展正则  2>/dev/null : 没权限的报错丢进黑洞
-#   正则: ^\s*HOOKS=.*\bacpi_override\b （行首可能有空格 + 内容含独立单词 acpi_override）
 HOOK_OK=0
 for f in "${CONF_FILES[@]}"; do
   if grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$f" 2>/dev/null; then
-    echo "  [OK] $f already has ${HOOK_NAME}"
     HOOK_OK=1
     break
   fi
 done
 
-# 若都没找到，在第一个带 HOOKS=( 的配置里插入到 base 之后
+# 7.2 幂等门：文件相同 + hook 已在 + 没要求强制重建 → 无事可做
+if [ "$REBUILD" -ne 1 ] \
+   && [ -f "$OVERRIDE_DIR/dsdt.aml" ] && cmp -s "$SRC" "$OVERRIDE_DIR/dsdt.aml" \
+   && [ "$HOOK_OK" -eq 1 ]; then
+  echo "  [OK] DSDT override already installed and up to date — nothing to do."
+  exit 0
+fi
+
+# 7.3 判定要做什么
+NEED_AML=1
+if [ -f "$OVERRIDE_DIR/dsdt.aml" ] && cmp -s "$SRC" "$OVERRIDE_DIR/dsdt.aml"; then
+  NEED_AML=0    # 文件相同（多半只是强制重建，或 hook 丢了需自愈）
+fi
+NEED_CONF=0
 if [ "$HOOK_OK" -ne 1 ]; then
-  INSERTED=0
+  # 补 hook：只在 $STAGE 副本上 sed + 验证，apply 时才覆盖真文件
   for f in "${CONF_FILES[@]}"; do
     if grep -qE '^\s*HOOKS=\(' "$f" 2>/dev/null; then
-      # sed -i -E 's/^(HOOKS=\([^)]*\bbase)\b/\1 acpi_override/'  在 base 后插 hook。
-      # 关键：若文件里没有 base，sed 不改动但仍返回 0（假成功），
-      # 所以用「sed && 事后 grep 复查」判断是否真的插进去了。
-      # 改动该配置文件前先存快照；sed 没成功则丢弃（不留无谓快照）
-      CONF_SNAP_TMP="$(mktemp 2>/dev/null || mktemp)"
-      cp -f "$f" "$CONF_SNAP_TMP"
-      if sed -i -E 's/^(HOOKS=\([^)]*\bbase)\b/\1 '"${HOOK_NAME}"'/' "$f" \
-         && grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$f"; then
-        CONF_FILE="$f"; CONF_SNAP="$CONF_SNAP_TMP"
-        echo "  [OK] Inserted ${HOOK_NAME} right after 'base' in: $f"
-        INSERTED=1
+      cp -f "$f" "$STAGE/config.new"
+      if sed -E 's/^(HOOKS=\([^)]*\bbase)\b/\1 '"${HOOK_NAME}"'/' "$STAGE/config.new" \
+           > "$STAGE/config.new.tmp" \
+         && mv -f "$STAGE/config.new.tmp" "$STAGE/config.new" \
+         && grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$STAGE/config.new"; then
+        NEED_CONF=1
+        CONF_TARGET="$f"
+        cp -f "$f" "$STAGE/config.orig"   # 原件副本（重建失败还原用）
+        echo "  [OK] Will add ${HOOK_NAME} after 'base' in: $f"
         break
       else
-        rm -f -- "$CONF_SNAP_TMP"    # 没改成功 → 丢弃快照
         echo "  [WARN] $f has HOOKS= but no 'base' to anchor on; skipped." >&2
+        rm -f -- "$STAGE/config.new" "$STAGE/config.new.tmp"
       fi
     fi
   done
-  if [ "$INSERTED" -ne 1 ]; then
-    echo "  [WARN] Could not add '${HOOK_NAME}' to HOOKS automatically." >&2
-    echo "         Please add it to the HOOKS line manually, then re-run." >&2
+  if [ "$NEED_CONF" -ne 1 ]; then
+    echo "Error: '${HOOK_NAME}' hook is missing and could not be added automatically." >&2
+    echo "       Add it to the HOOKS line of /etc/mkinitcpio.conf manually, then re-run." >&2
+    exit 1
   fi
+fi
+
+# 7.4 交互确认（apply 前最后的反悔点；非交互自动放行）
+if [ "$INTERACTIVE" -eq 1 ]; then
+  echo "  Plan:" >&2
+  [ "$NEED_AML" -eq 1 ] && echo "    - install dsdt.aml -> $OVERRIDE_DIR/dsdt.aml" >&2
+  [ "$NEED_CONF" -eq 1 ] && echo "    - add ${HOOK_NAME} hook to $CONF_TARGET" >&2
+  [ "$REBUILD" -eq 1 ]   && echo "    - force rebuild initramfs" >&2
+  read -r -p "  Apply these changes and rebuild now? [y/N] " REPLY
+  case "$REPLY" in
+    y|Y|yes|Yes) ;;
+    *) echo "  Aborted (nothing was changed)." >&2; exit 1 ;;
+  esac
+fi
+
+# ---- 8. apply（唯一可变窗口）：原子替换 ----
+echo "[2/3] Applying changes ..."
+mkdir -p "$OVERRIDE_DIR"
+
+if [ "$NEED_AML" -eq 1 ]; then
+  # 时间戳历史备份；原件副本留 $STAGE 供失败还原
+  if [ -f "$OVERRIDE_DIR/dsdt.aml" ]; then
+    cp -f "$OVERRIDE_DIR/dsdt.aml" "$STAGE/dsdt.orig"
+    STAMP="$(date +%Y%m%d-%H%M%S)"
+    cp -f "$OVERRIDE_DIR/dsdt.aml" "$OVERRIDE_DIR/dsdt.aml.bak-$STAMP"
+    echo "  [OK] Previous override backed up -> dsdt.aml.bak-$STAMP"
+  fi
+  # 同目录写临时文件再 mv（原子 rename，避免读到半截文件）
+  cp -f "$SRC" "$OVERRIDE_DIR/dsdt.aml.new"
+  mv -f "$OVERRIDE_DIR/dsdt.aml.new" "$OVERRIDE_DIR/dsdt.aml"
+  CHANGED_AML=1
+  echo "  [OK] Installed -> $OVERRIDE_DIR/dsdt.aml"
+else
+  echo "  [OK] dsdt.aml unchanged (already the target version)."
+fi
+
+if [ "$NEED_CONF" -eq 1 ]; then
+  cp -f "$STAGE/config.new" "$CONF_TARGET.new"
+  mv -f "$CONF_TARGET.new" "$CONF_TARGET"
+  CHANGED_CONF=1
+  echo "  [OK] Added ${HOOK_NAME} right after 'base' in: $CONF_TARGET"
 fi
 
 # ---- 9. 重建 initramfs ----
 echo "[3/3] Rebuilding initramfs ..."
-# 交互(有终端)且系统有 limine-mkinitcpio → 用它（会弹 Y/N 让你选内核）
-# 否则（curl|bash 非交互 / 无 limine）→ mkinitcpio -P（重建所有预设，效果相同）
+# 交互(有终端)且有 limine-mkinitcpio → 用它（会弹 Y/N 选内核）；否则 mkinitcpio -P。
 if [ "$INTERACTIVE" -eq 1 ] && command -v limine-mkinitcpio >/dev/null 2>&1; then
-  limine-mkinitcpio
+  limine-mkinitcpio || { echo "Error: initramfs rebuild failed." >&2; exit 1; }
 else
-  mkinitcpio -P
-fi || { echo "Error: initramfs rebuild failed." >&2; exit 1; }
-DONE=1   # 重建成功 → 标记完成；此前任何失败退出都会触发 on_exit 回滚
+  mkinitcpio -P || { echo "Error: initramfs rebuild failed." >&2; exit 1; }
+fi
+BUILT=1   # 重建成功 → 标记完成；重建失败会 exit → on_exit 用 $STAGE 原件还原
 
 echo ""
 echo "Done. You can reboot now without acpi=off / noapic."
