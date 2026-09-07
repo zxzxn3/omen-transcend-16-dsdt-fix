@@ -14,7 +14,7 @@
 # 一行安装（在 CachyOS 上，无需先 clone/挂载；会自动检测 BIOS 并拉取对应补丁）：
 #   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/install.sh | sudo bash
 # 板号:   期望 8C4D（OMEN Transcend 16-u1xxx）。不一致 → 软警告：交互询问（默认否）/ 非交互安全中止；-f/--force 可忽略。
-# BIOS:   无精确匹配时，主动查询仓库里已有的版本让你挑（交互）；非交互则报错并列出可选版本。
+# BIOS:   精确匹配 dsdt-fix/<BIOS>/；尚未收录 → [WARN] 自动回退到最近的已发布版本（FALLBACK_BIOSES）。
 # 功能:   把编译好的 dsdt.aml 装进 initramfs（含 acpi_override hook），然后重建 initramfs
 # 幂等:   可重复运行，不会重复插入 hook；同一份 .aml 已装则跳过。
 # 安全:   复制/改配置后若中途退出（报错/Ctrl-C），自动回滚到改动前状态。
@@ -31,9 +31,11 @@ REPO_OWNER="zxzxn3"
 REPO_NAME="omen-transcend-16-u1024tx-f29-dsdt-fix"
 REPO_BRANCH="main"
 RAW_BASE="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}"
-# GitHub API：列出 dsdt-fix/ 下有哪些版本目录（用于「无精确匹配时让用户挑」）
-API_DIR="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/dsdt-fix"
 EXPECTED_BOARD="8C4D"            # OMEN Transcend 16-u1xxx 的板号（软警告用）
+
+# 仓库已收录的 DSDT 版本目录（新 → 旧）。新增 dsdt-fix/<ver>/ 时，在此表最前加一项。
+# 只用于「本机 BIOS 尚未收录」时自动回退到最近的已发布版本；精确匹配不依赖此表。
+FALLBACK_BIOSES=("F.29")
 
 OVERRIDE_DIR="/etc/initcpio/acpi_override"  # initramfs 里放 DSDT 覆盖文件的固定目录
 MKINITCPIO_CONF="/etc/mkinitcpio.conf"       # mkinitcpio 主配置文件
@@ -227,54 +229,30 @@ else
     exit 1
   fi
   echo "No local dsdt.aml — auto-selecting dsdt-fix/<BIOS>/dsdt.aml from GitHub."
-  OFFICIAL_URL="$RAW_BASE/dsdt-fix/${BIOS_VER}/dsdt.aml"
-  # 先 HEAD 探测该精确版本是否存在（raw 返回 200 / 404）
-  HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' "$OFFICIAL_URL" || true)"
-  if [ "$HTTP_CODE" = "200" ]; then
-    SRC="$OFFICIAL_URL"
+  # 先 HEAD 探测「本机 BIOS」的精确目录是否存在（raw 返回 200 / 404）
+  EXACT_URL="$RAW_BASE/dsdt-fix/${BIOS_VER}/dsdt.aml"
+  if [ "$(curl -s -o /dev/null -w '%{http_code}' "$EXACT_URL" || true)" = "200" ]; then
+    SRC="$EXACT_URL"
   else
-    echo "  [WARN] No exact DSDT folder for BIOS '${BIOS_VER}' (tried dsdt-fix/${BIOS_VER}/)." >&2
-    # 主动查询仓库里已有哪些版本的目录（GitHub API → python3 解析 json）
-    AVAILABLE=""
-    if command -v python3 >/dev/null 2>&1; then
-      AVAILABLE="$(curl -fsSL "$API_DIR" 2>/dev/null | python3 -c 'import json,sys
-try:
-    d = json.load(sys.stdin)
-    print(" ".join(e["name"] for e in d if e.get("type") == "dir"))
-except Exception:
-    pass' || true)"
-    fi
-    if [ -z "$AVAILABLE" ]; then
-      echo "  [WARN] Could not list available versions (need python3 + network)." >&2
-      echo "         Pass an explicit .aml path/URL instead." >&2
-      exit 1
-    fi
-    if [ "$INTERACTIVE" -eq 1 ]; then
-      echo "  Available BIOS versions in the repo:" >&2
-      IDX=1
-      for NAME in $AVAILABLE; do
-        echo "    [$IDX] $NAME" >&2
-        IDX=$((IDX+1))
-      done
-      echo -n "  Pick a version to install (or 0/q to abort): " >&2
-      read -r CHOICE
-      case "$CHOICE" in
-        0|q|Q|"") echo "  Aborted." >&2; exit 1 ;;
-      esac
-      # 把数字映射回版本名
-      IDX=1; PICKED=""
-      for NAME in $AVAILABLE; do
-        if [ "$CHOICE" = "$IDX" ]; then PICKED="$NAME"; fi
-        IDX=$((IDX+1))
-      done
-      if [ -z "$PICKED" ]; then
-        echo "  Invalid choice: $CHOICE" >&2
-        exit 1
+    # 本机 BIOS 尚未发布 → 自动回退到「最近的已发布版本」（FALLBACK_BIOSES 新→旧逐个 HEAD）。
+    # 新增 dsdt-fix/<ver>/ 时记得把版本加进 FALLBACK_BIOSES 最前面。
+    echo "  [WARN] No DSDT published yet for BIOS '${BIOS_VER}'." >&2
+    FOUND_URL=""
+    FOUND_VER=""
+    for ver in "${FALLBACK_BIOSES[@]}"; do
+      url="$RAW_BASE/dsdt-fix/${ver}/dsdt.aml"
+      if [ "$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)" = "200" ]; then
+        FOUND_URL="$url"; FOUND_VER="$ver"
+        break
       fi
-      SRC="$RAW_BASE/dsdt-fix/${PICKED}/dsdt.aml"
+    done
+    if [ -n "$FOUND_URL" ]; then
+      echo "  [WARN] Falling back to closest published version ${FOUND_VER}." >&2
+      echo "         Want a different one? Pass an explicit .aml path/URL instead." >&2
+      SRC="$FOUND_URL"
     else
-      echo "  [WARN] Non-interactive: cannot prompt for a version. Available: ${AVAILABLE}" >&2
-      echo "         Run interactively, or pass an explicit .aml path/URL." >&2
+      echo "  [WARN] Could not reach GitHub, or no DSDT published for this machine." >&2
+      echo "         Pass an explicit .aml path/URL instead." >&2
       exit 1
     fi
   fi
