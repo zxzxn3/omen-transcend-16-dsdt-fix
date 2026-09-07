@@ -10,11 +10,12 @@
 #        -h, --help         显示英文帮助
 #        --                 其后的参数一律视为 .aml 路径
 # 退出码: 0 成功 / 1 运行错误（找不到补丁/下载失败/校验失败/重建失败）/ 2 用法错误
-# 来源:   给了路径或 URL → 直接用，不做检测/警告（可能是自编译补丁，责任在用户）。
-#         没给 → 默认从官方 repo 拉：优先用 --board/--bios，否则按本机 DMI 自动检测；
-#               精确命中 → 安装（显式参数与本机不符时软警告）；
-#               未收录 → 打印可用补丁表并退出，让你显式给对参数。
-# 结构:   官方补丁按 dsdt-fix/<board>/<bios>/dsdt.aml 组织；可用清单见 dsdt-fix/index.txt。
+# 来源:   --board/--bios 必须成对给（都给出 或 都不给）。
+#         给了路径/URL 且没给 board/bios → 直接当 .aml 用（可能自编译补丁，责任在用户）。
+#         给了路径/URL 且给了 board/bios → 把它当 repo 根/镜像（本地 clone 或镜像 URL）拉补丁。
+#         没给路径/URL → 官方 repo；board/bios 显式或按本机 DMI 自动检测。
+#         未收录 → 打印该源 index.md 的可用补丁表并退出，让你显式给对参数。
+# 结构:   补丁按 dsdt-fix/<board>/<bios>/dsdt.aml 组织；可用清单见各源根下的 index.md。
 # 一行安装（在 CachyOS 上，自动检测 DMI 并拉取对应补丁）：
 #   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/install.sh | sudo bash
 # 功能:   把编译好的 dsdt.aml 装进 initramfs（含 acpi_override hook），然后重建 initramfs
@@ -112,10 +113,15 @@ Options:
   --               Treat all remaining arguments as the .aml operand.
 
 Operand (at most one):
-  Local path or http(s) URL of a dsdt.aml to install. When given, the file is
-  used as-is with no checks (it may be a self-built patch). When omitted, the
-  patch is downloaded from the GitHub repo as dsdt-fix/<board>/<bios>/dsdt.aml,
-  using --board/--bios or the machine DMI (board + BIOS).
+  - Without --board/--bios: a dsdt.aml local path or URL, used as-is with no
+    checks (it may be a self-built patch).
+  - With --board/--bios: a repo base (a local clone directory or an http(s)
+    mirror root) from which dsdt-fix/<board>/<bios>/dsdt.aml is taken,
+    instead of the GitHub repo.
+  - Omitted: the patch is pulled from the GitHub repo as
+    dsdt-fix/<board>/<bios>/dsdt.aml, using --board/--bios or the machine DMI.
+
+Available patches are listed in the dsdt-fix/index.md of the repo base.
 
 Exit status:
   0  success
@@ -154,9 +160,14 @@ done
 
 # 剩余全是操作数；只允许一个
 if [ "$#" -gt 1 ]; then
-  usage_err "too many arguments: only one dsdt.aml path/URL allowed"
+  usage_err "too many arguments: only one operand allowed"
 fi
 [ "$#" -eq 1 ] && SRC="$1"
+
+# --board/--bios 必须成对：都给出（本地/URL 当 repo 根用）或都不给（直接 .aml / DMI 自动）
+if { [ -n "$BOARD" ] || [ -n "$BIOS" ]; } && { [ -z "$BOARD" ] || [ -z "$BIOS" ]; }; then
+  usage_err "--board and --bios must be given together (both or neither)"
+fi
 
 # ---- 1. 必须是 root ----
 # id -u 返回当前用户 ID；root 是 0。放在最前，别等下载/询问后才报错。
@@ -174,49 +185,58 @@ if [ -d /run/lock ] && command -v flock >/dev/null 2>&1; then
 fi
 
 # ---- 2. 来源解析 ----
-# 规则：给了路径/URL → 直接用，不做检测/警告（可能是自编译补丁，责任在用户）。
-#       没给 → 官方 repo：用 --board/--bios，否则按本机 DMI 自动检测；
-#              精确命中 → 安装；显式参数与本机不符 → 软警告；
-#              未收录 → 打印可用补丁表并退出，让用户显式给对参数。
-if [ -n "$SRC" ]; then
-  # (a) 用户显式指定（本地路径或 URL）—— 直接用
+# 三种情况：
+#  A) 给了路径/URL 且没给 board/bios → 直接把它当 .aml 装（不判断，可能自编译补丁）。
+#  B) 给了路径/URL 且给了 board+bios → 把它当 repo 根/镜像（本地 clone 或 http(s) 基址），
+#     从中拉 dsdt-fix/<board>/<bios>/dsdt.aml —— 相当于换了 raw_base。
+#  C) 没给路径/URL → 用官方 repo（RAW_BASE），board/bios 显式或按本机 DMI 自动检测。
+# B/C 未收录 → 打印该源的可用补丁表（解析 index.md 表格）并退出，绝不自动回退。
+if [ -n "$SRC" ] && [ -z "$BOARD" ] && [ -z "$BIOS" ]; then
+  # A) 直接模式
   echo "Using user-provided dsdt.aml: $SRC (no checks; assumed correct by user)."
 else
-  # (b) 官方 repo 下拉
+  # B/C) repo 模式
   if ! command -v curl >/dev/null 2>&1; then
-    echo "Error: official download requires 'curl' (sudo pacman -S curl)." >&2
+    echo "Error: downloading patches requires 'curl' (sudo pacman -S curl)." >&2
     exit 1
   fi
+  # 源：给了路径/URL 就当作 repo 根/镜像；否则官方 RAW_BASE
+  BASE="$SRC"
+  [ -n "$BASE" ] || BASE="$RAW_BASE"
+  BASE_LOCAL=0
+  if [[ "$BASE" == http://* || "$BASE" == https://* ]]; then BASE_LOCAL=0; else BASE_LOCAL=1; fi
 
-  # b1. 确定 board/bios：显式参数 > DMI 自动检测
+  # 确定 board/bios：显式 > DMI 自动
   SYS_DMI="/sys/class/dmi/id"
   DETECTED_BOARD="$(cat "$SYS_DMI/board_name" 2>/dev/null | xargs 2>/dev/null || true)"
   DETECTED_BIOS="$(cat "$SYS_DMI/bios_version" 2>/dev/null | xargs 2>/dev/null || true)"
   USES_EXPLICIT=0
-  if [ -n "$BOARD" ] || [ -n "$BIOS" ]; then
-    # 用了其中一个就必须两个都给出
-    if [ -z "$BOARD" ] || [ -z "$BIOS" ]; then
-      echo "Error: --board and --bios must be given together." >&2
-      exit 2
-    fi
+  if [ -n "$BOARD" ]; then
     USES_EXPLICIT=1
   elif [ -z "$DETECTED_BOARD" ] || [ -z "$DETECTED_BIOS" ]; then
     echo "Error: could not detect board/BIOS from this machine; pass --board and --bios." >&2
     exit 1
   else
-    BOARD="$DETECTED_BOARD"
-    BIOS="$DETECTED_BIOS"
+    BOARD="$DETECTED_BOARD"; BIOS="$DETECTED_BIOS"
   fi
   if [ "$USES_EXPLICIT" -eq 1 ]; then
     echo "Patch target: board=${BOARD} BIOS=${BIOS} (explicit)"
   else
     echo "Patch target: board=${BOARD} BIOS=${BIOS} (auto-detected from this machine)"
   fi
+  [ "$BASE_LOCAL" -eq 1 ] && echo "Repo base (local): $BASE"
 
-  # b2. HEAD 探测精确补丁是否存在
-  PATCH_URL="$RAW_BASE/dsdt-fix/${BOARD}/${BIOS}/dsdt.aml"
-  if [ "$(curl -s -o /dev/null -w '%{http_code}' "$PATCH_URL" || true)" = "200" ]; then
-    # b2a. 显式参数且与本机 DMI 不符 → 软警告（默认保守：交互询问/非交互中止，-f 放行）
+  # 探测补丁是否存在
+  PATCH_REL="dsdt-fix/${BOARD}/${BIOS}/dsdt.aml"
+  FOUND=0
+  if [ "$BASE_LOCAL" -eq 1 ]; then
+    [ -f "${BASE%/}/$PATCH_REL" ] && FOUND=1
+  else
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "${BASE%/}/$PATCH_REL" || true)" = "200" ] && FOUND=1
+  fi
+
+  if [ "$FOUND" -eq 1 ]; then
+    # 显式参数且与本机 DMI 不符 → 软警告（默认保守：交互询问/非交互中止，-f 放行）
     if [ "$USES_EXPLICIT" -eq 1 ] \
        && [ -n "$DETECTED_BOARD$DETECTED_BIOS" ] \
        && { [ "$BOARD" != "$DETECTED_BOARD" ] || [ "$BIOS" != "$DETECTED_BIOS" ]; }; then
@@ -237,24 +257,32 @@ else
         echo "  [OK] Ignoring machine-match warning (-f/--force)." >&2
       fi
     fi
-    SRC="$PATCH_URL"
+    SRC="${BASE%/}/$PATCH_REL"
   else
-    # b2b. 未收录 → 拉 index.txt 渲染可用补丁表，提示重跑并退出（不自动回退）
-    echo "  [WARN] No published patch for board=${BOARD} BIOS=${BIOS}." >&2
+    # 未收录 → 显示该源的可用补丁（解析 index.md 表格）并退出（不自动回退）
+    echo "  [WARN] No patch for board=${BOARD} BIOS=${BIOS} in this repo base." >&2
     echo "  Available patches (board | BIOS versions):"
-    IDX_DATA="$(curl -fsSL "$RAW_BASE/dsdt-fix/index.txt" 2>/dev/null || true)"
+    IDX_DATA=""
+    if [ "$BASE_LOCAL" -eq 1 ]; then
+      IDX_DATA="$(cat "${BASE%/}/dsdt-fix/index.md" 2>/dev/null || true)"
+    else
+      IDX_DATA="$(curl -fsSL "${BASE%/}/dsdt-fix/index.md" 2>/dev/null || true)"
+    fi
     if [ -n "$IDX_DATA" ]; then
-      printf '%s\n' "$IDX_DATA" | awk '
+      printf '%s\n' "$IDX_DATA" | awk -F'|' '
         /^[[:space:]]*#/ || NF == 0 { next }
-        { if (!($1 in have)) { have[$1] = 1; b[++nb] = $1 }
-          a[$1] = (a[$1] == "" ? "" : a[$1] ",") $2 }
-        END { for (i = 1; i <= nb; i++) print "    " b[i] " | " a[b[i]] }
+        { b=$2; v=$3; gsub(/^[[:space:]]+|[[:space:]]+$/, "", b); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v) }
+        v ~ /^-+$/ { next }                 # 分隔线
+        v ~ /^[Bb][Ii][Oo][Ss]$/ { next }   # 表头
+        b == "" || v == "" { next }
+        { if (!(b in have)) { have[b]=1; order[++n]=b } a[b]=a[b] (a[b]==""?"":",") v }
+        END { for (i=1;i<=n;i++) print "    " order[i] " | " a[order[i]] }
       ' || true
     else
-      echo "    (could not fetch the patch list - offline?)"
+      echo "    (could not read the patch list from this base)"
     fi
     echo "  Re-run with --board <ID> --bios <VER> matching an available patch," >&2
-    echo "  or pass an explicit .aml path/URL." >&2
+    echo "  or point at a specific .aml file." >&2
     exit 1
   fi
 fi

@@ -1,3 +1,0 @@
-# Available DSDT patches: one line per patch = "<board> <BIOS>"
-# Add a line here whenever a new dsdt-fix/<board>/<BIOS>/ folder is published.
-8C4D F.29

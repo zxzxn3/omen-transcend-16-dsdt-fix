@@ -12,7 +12,8 @@
 - 内置喇叭无声
 
 > 目前只发布了 **board 8C4D / BIOS F.29** 一份补丁。仓库结构按
-> `dsdt-fix/<board>/<bios>/` 组织（清单见 `dsdt-fix/index.txt`），方便日后收录其它板/BIOS。
+> `dsdt-fix/<board>/<bios>/` 组织，可用补丁清单见 [`dsdt-fix/index.md`](dsdt-fix/index.md)
+> （Markdown 表格，GitHub 自动渲染）。
 > 官方下拉会按 **board×BIOS** 精确匹配；你显式指定的与本机不符时给软警告。
 > 自己给路径/URL 装 `.aml` 属「自负责任」，安装器不做任何匹配判断。
 > **触控板未做修改**（本机原始固件下可用，社区触控板改动已尝试并回退）。
@@ -27,8 +28,9 @@
   - `dsdt.aml` — 编译好的覆盖表（安装用）
   - `dsdt.dsl` / `dsdt-original.dsl` / `dsdt-original.dat` — 源码与原始表
   - `patch.diff` — **每处改动的 问题/原理/出处（带 URL）**，改动细节以它为准
-- `dsdt-fix/index.txt` —— 已发布补丁清单（`<board> <bios>` 一行一个），供列表显示。
-- 目前只有：`dsdt-fix/8C4D/F.29/`。
+- `dsdt-fix/index.md` —— 已发布补丁清单（Markdown 表格 `| board | BIOS |`），供 README
+  链接引用、也是 install.sh 列出「可用补丁」的数据源。
+- 目前只有：[`dsdt-fix/8C4D/F.29/`](dsdt-fix/8C4D/F.29/)。
 
 ## 安装（CachyOS / Arch + Limine）
 
@@ -44,6 +46,8 @@ curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/m
 sudo bash install.sh                                  # 官方自动：按本机 DMI 拉 dsdt-fix/<board>/<bios>/dsdt.aml
 sudo bash install.sh --board 8C4D --bios F.29         # 官方：显式指定板/BIOS
 sudo bash install.sh /path/to/dsdt.aml                # 本地：直接用，不判断（可自编译）
+sudo bash install.sh --board 8C4D --bios F.29 /clone/of/this-repo   # 本地镜像/自建 base
+sudo bash install.sh --board 8C4D --bios F.29 https://example.com/base  # 远程镜像/换 raw_base
 sudo bash install.sh --rebuild                        # 强制重建（上次可能没建成时恢复）
 ```
 
