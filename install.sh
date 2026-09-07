@@ -21,7 +21,8 @@
 # 幂等:   同补丁已装 + hook 已在 → 无事可做(exit 0)；加 --rebuild 可强制重建。
 # 安全:   两阶段：准备阶段不改真文件；重建前最后一刻才 apply；中断/重建失败自动还原；
 #         所有中间文件退出时清理，不残留。
-# 注意:   curl | bash 时 stdin 不是终端，脚本会自动退回非交互的 mkinitcpio -P。
+# 注意:   重建优先用 CachyOS 的 limine-mkinitcpio（无终端也安全），否则 mkinitcpio -P；
+#         重建后自动校验 override 是否真的进了 initramfs（lsinitcpio --early）。
 # =====================================================================
 set -euo pipefail
 # set -e      : 任何一条命令失败就立即退出（避免出错后继续乱跑）
@@ -74,6 +75,7 @@ on_exit() {
         echo "  [OK] Restored $CONF_TARGET (reverted HOOKS edit)" >&2
       fi
       echo "  Re-run install.sh to try again." >&2
+      echo "  Note: if some kernels were rebuilt before the failure, re-run once so all are consistent." >&2
     fi
     # 清掉可能残留的同目录 .new 临时文件
     rm -f -- "$OVERRIDE_DIR/dsdt.aml.new" 2>/dev/null
@@ -342,14 +344,16 @@ if [ "$HOOK_OK" -ne 1 ]; then
   if sed -E 's/^(HOOKS=\([^)]*\bbase)\b/\1 '"${HOOK_NAME}"'/' "$STAGE/config.new" \
        > "$STAGE/config.new.tmp" \
      && mv -f "$STAGE/config.new.tmp" "$STAGE/config.new" \
-     && grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$STAGE/config.new"; then
+     && bash -n "$STAGE/config.new" 2>/dev/null \
+     && grep -qE '^\s*HOOKS=\([^)]*\bacpi_override\b' "$STAGE/config.new"; then
     NEED_CONF=1
     CONF_TARGET="$MKINITCPIO_CONF"
     cp -f "$MKINITCPIO_CONF" "$STAGE/config.orig"   # 原件副本（重建失败还原用）
     echo "  [OK] Will add ${HOOK_NAME} after 'base' in: $MKINITCPIO_CONF"
   else
-    echo "Error: $MKINITCPIO_CONF has HOOKS= but no 'base' to anchor on." >&2
-    echo "       Add '${HOOK_NAME}' to its HOOKS line manually, then re-run." >&2
+    echo "Error: could not add '${HOOK_NAME}' into the HOOKS= list of $MKINITCPIO_CONF" >&2
+    echo "       (no 'base' anchor, or the edited config failed to parse/validate)." >&2
+    echo "       Add it to the HOOKS line manually, then re-run." >&2
     exit 1
   fi
 fi
@@ -397,16 +401,75 @@ fi
 
 # ---- 9. 重建 initramfs ----
 echo "[3/3] Rebuilding initramfs ..."
-# 交互(有终端)且有 limine-mkinitcpio → 用它（会弹 Y/N 选内核）；否则 mkinitcpio -P。
-if [ "$INTERACTIVE" -eq 1 ] && command -v limine-mkinitcpio >/dev/null 2>&1; then
+# CachyOS 的 limine-mkinitcpio = 重建 initramfs + 用 limine-entry-tool 刷新 Limine 启动条目
+# （/etc/default/limine -> /boot/limine.conf）。它由 pacman hook 在无终端场景调用，非交互安全，
+# 所以只要装了就用它（与有无终端无关）；否则退回 mkinitcpio -P。
+if command -v limine-mkinitcpio >/dev/null 2>&1; then
   limine-mkinitcpio || { echo "Error: initramfs rebuild failed." >&2; exit 1; }
 else
   mkinitcpio -P || { echo "Error: initramfs rebuild failed." >&2; exit 1; }
 fi
-BUILT=1   # 重建成功 → 标记完成；重建失败会 exit → on_exit 用 $STAGE 原件还原
+
+# ---- 9.5 校验 override 真的进了重建出的 initramfs ----
+# acpi_override hook 用 add_file_early 把 .aml 放进镜像内早期无压缩 cpio 的
+# kernel/firmware/acpi/dsdt.aml；镜像路径从 /etc/mkinitcpio.d/*.preset 解析
+# （mkinitcpio 与 limine-entry-tool 用的是同一来源）。
+preset_images() {
+  local preset p img
+  for preset in /etc/mkinitcpio.d/*.preset; do
+    [ -f "$preset" ] || continue
+    (
+      set +u
+      # shellcheck disable=SC1090
+      . "$preset" 2>/dev/null || true
+      for p in ${PRESETS[@]:-}; do
+        eval "img=\${${p}_image:-}"; [ -n "$img" ] && printf '%s\n' "$img"
+        eval "img=\${${p}_uki:-}";   [ -n "$img" ] && printf '%s\n' "$img"
+      done
+    )
+  done
+}
+
+VERIFIED_IMGS=0
+MISSING_IMGS=0
+if command -v lsinitcpio >/dev/null 2>&1; then
+  while IFS= read -r img; do
+    [ -f "$img" ] || continue
+    if lsinitcpio --early "$img" 2>/dev/null | grep -qx 'kernel/firmware/acpi/dsdt.aml'; then
+      VERIFIED_IMGS=$((VERIFIED_IMGS+1))
+      echo "  [OK] Override verified inside: $img"
+    else
+      MISSING_IMGS=$((MISSING_IMGS+1))
+      echo "  [WARN] Override NOT found inside: $img" >&2
+    fi
+  done < <(preset_images)
+  # 确实查过 >=1 个镜像、却一个都不含 override → 硬失败（触发还原），别假装成功
+  if [ "$MISSING_IMGS" -gt 0 ] && [ "$VERIFIED_IMGS" -eq 0 ]; then
+    echo "Error: rebuilt initramfs does not contain the DSDT override (hook inactive)." >&2
+    echo "       Rolling back; check HOOKS and ${OVERRIDE_DIR}/ then re-run." >&2
+    exit 1
+  fi
+  if [ "$VERIFIED_IMGS" -eq 0 ]; then
+    echo "  [WARN] No built initramfs found to verify automatically; check manually:" >&2
+    echo '         lsinitcpio --early <image> | grep kernel/firmware/acpi/dsdt.aml' >&2
+  fi
+else
+  echo "  [WARN] lsinitcpio not found; skipping initramfs content verification." >&2
+fi
+BUILT=1   # 重建成功且（可验证时）确认 override 已进镜像 → 标记完成；此前的失败 exit 均由 on_exit 还原
 
 echo ""
-echo "Done. You can reboot now without acpi=off / noapic."
-echo "After reboot, verify with:"
-echo '  dmesg | grep -iE "override|taint"   # expect: DSDT override applied / kernel tainted'
-echo '  dmesg | grep -i AE_AML_OPERAND_TYPE # expect: no output'
+echo "Install complete. Before rebooting:"
+echo "  1. Confirm the override is inside the initramfs (done above when possible), e.g.:"
+echo '       lsinitcpio --early /boot/<image> | grep kernel/firmware/acpi/dsdt.aml'
+echo "  2. Remove 'acpi=off' from the kernel cmdline (CachyOS: /etc/default/limine, then"
+echo "     re-run 'sudo limine-mkinitcpio'). You may KEEP 'noapic' for this first boot as a"
+echo "     safety margin (noapic does not disable ACPI, so the override still applies)."
+echo "  3. Reboot and verify the override is actually active:"
+echo '       dmesg | grep -i "ACPI: Override"      # expect: DSDT ... this is unsafe: tainting kernel'
+echo '       dmesg | grep -i AE_AML_OPERAND_TYPE   # expect: no output'
+echo "       (built-in speakers should also work)"
+echo "  4. Only after those pass, also remove 'noapic'."
+echo "If booting without acpi=off fails, restore acpi=off noapic and roll back:"
+echo "  remove ${OVERRIDE_DIR}/dsdt.aml, drop '${HOOK_NAME}' from HOOKS in $MKINITCPIO_CONF,"
+echo "  then 'sudo mkinitcpio -P'. A pre-change copy is kept as dsdt.aml.bak-<timestamp>."
