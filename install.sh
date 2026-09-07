@@ -174,7 +174,7 @@ if [ -n "$BOARD_NAME$PRODUCT_NAME" ] \
     esac
   else
     # 非交互无法征询用户 → 走保守安全路径：默认当作「否」中止；提示可加 -f/--force 忽略。
-    echo "  Aborted: board check failed in non-interactive run (safety default = No)." >&2
+    echo "  Aborted: board check failed in non-interactive run." >&2
     echo "  Re-run with -f/--force to ignore this check." >&2
     exit 1
   fi
@@ -261,6 +261,8 @@ if [ -f "$OVERRIDE_DIR/dsdt.aml" ]; then
   PRIOR_AML="$(mktemp 2>/dev/null || mktemp)"
   cp -f "$OVERRIDE_DIR/dsdt.aml" "$PRIOR_AML"
 fi
+# 快照就绪后立即「武装」回滚：此后任何一步失败（含 cp 中途写坏）都会还原
+MUTATED=1
 
 # 覆盖前备份旧的：带时间戳、只增不滚 → 无限历史，每次只加一个新文件。
 if [ -f "$OVERRIDE_DIR/dsdt.aml" ]; then
@@ -270,7 +272,6 @@ if [ -f "$OVERRIDE_DIR/dsdt.aml" ]; then
 fi
 
 cp -f "$SRC" "$OVERRIDE_DIR/dsdt.aml"    # 复制新 override（前面已做备份/去重）
-MUTATED=1                                  # 此后若中途退出，on_exit 会回滚
 echo "  [OK] Installed -> $OVERRIDE_DIR/dsdt.aml"
 
 # ---- 8. 确保 mkinitcpio 配置里启用了 acpi_override hook ----
@@ -335,7 +336,7 @@ fi || { echo "Error: initramfs rebuild failed." >&2; exit 1; }
 DONE=1   # 重建成功 → 标记完成；此前任何失败退出都会触发 on_exit 回滚
 
 echo ""
-echo "Done. You can reboot now (do NOT use acpi=off / noapic)."
+echo "Done. You can reboot now without acpi=off / noapic."
 echo "After reboot, verify with:"
 echo '  dmesg | grep -iE "override|taint"   # expect: DSDT override applied / kernel tainted'
 echo '  dmesg | grep -i AE_AML_OPERAND_TYPE # expect: no output'
