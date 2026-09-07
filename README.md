@@ -45,12 +45,13 @@ the auto-managed Limine entries); on plain Arch it falls back to
 - **It verifies, not just hopes.** After the rebuild, `install.sh` resolves the
   images from `/etc/mkinitcpio.d/*.preset` (the same source the boot-entry
   tooling uses) and checks each with `lsinitcpio --early` for
-  `kernel/firmware/acpi/dsdt.aml`. If checked images all lack it, the script
-  errors and rolls back.
-- **Conservative about configs.** Only `/etc/mkinitcpio.conf` is auto-edited.
-  If a preset builds from a *custom* config that lacks the hook, or the hook
-  can only live in a `.d` fragment, the script refuses up front and tells you
-  exactly what to add by hand.
+  `kernel/firmware/acpi/dsdt.aml`. If any of the freshly built images lacks it,
+  the script errors and rolls back; if none can be found it tells you to check
+  manually. This is the single safety net for unusual config layouts.
+- **Conservative about configs.** Only `/etc/mkinitcpio.conf` is ever
+  auto-edited (it must have a `HOOKS=(... base ...)` line to anchor on); if the
+  hook cannot be added automatically it errors and tells you what to add by
+  hand.
 - **No litter.** Temporary files are removed on exit. The only persistent file
   is a `dsdt.aml.bak-<timestamp>` kept before each overwrite.
 
@@ -72,8 +73,6 @@ curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/m
 sudo bash install.sh                                  # official: auto-detect via DMI
 sudo bash install.sh --target 8C4D/F.29               # official: pick board/BIOS explicitly
 sudo bash install.sh /path/to/dsdt.aml                # your own .aml, used as-is (no checks)
-sudo bash install.sh --target 8C4D/F.29 /clone/of/this/repo      # local repo base / mirror
-sudo bash install.sh --target 8C4D/F.29 https://host/base       # remote mirror / changed raw base
 sudo bash install.sh --rebuild                        # force an initramfs rebuild
 ```
 
@@ -85,18 +84,14 @@ sudo bash install.sh --rebuild                        # force an initramfs rebui
 | `-f, --force` | Skip the machine-match soft warning and the interactive confirmation. |
 | `--rebuild` | Force a rebuild even if the override is already installed and unchanged. |
 | `-h, --help` | Show help and exit. |
-| `--` | Treat all remaining arguments as the `.aml` operand. |
 
 ### What the operand means
 
-- **Without `--target`** — the operand is a `dsdt.aml` path or URL, installed
-  as-is with **no** checks (e.g. a patch you compiled yourself; the only check
-  is the `DSDT` file signature).
-- **With `--target`** — the operand is treated as a **repo base** (a local
-  clone or an http(s) mirror root); the patch is taken from
-  `dsdt-fix/<target>/dsdt.aml` there instead of from GitHub.
-- **Omitted** — the patch is pulled from this GitHub repo, using `--target` or
-  the machine DMI.
+- **Given** — a `dsdt.aml` path, installed as-is with **no** checks (e.g. a
+  patch you compiled yourself; the only check is the `DSDT` file signature).
+  `--target` cannot be combined with an operand.
+- **Omitted** — the patch is pulled from this GitHub repo as
+  `dsdt-fix/<target>/dsdt.aml`, using `--target` or the machine DMI.
 
 An explicit `--target` that does not match the machine's DMI triggers a soft
 warning (interactive `y/N`, or abort in non-interactive mode unless `-f`).
