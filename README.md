@@ -20,7 +20,7 @@ board `8C4D`, BIOS `F.29`) so Linux no longer:
 
 ## How it works
 
-`install.sh` applies the DSDT override at the initramfs level using
+`dsdt-fix.sh` applies the DSDT override at the initramfs level using
 mkinitcpio's standard `acpi_override` hook:
 
 1. Place the patched table at `/etc/initcpio/acpi_override/dsdt.aml`.
@@ -42,7 +42,7 @@ the auto-managed Limine entries); on plain Arch it falls back to
 - **Automatic rollback.** If anything fails before the rebuild is confirmed, an
   `EXIT` trap restores the previous `dsdt.aml` and the mkinitcpio config from
   staged originals. A single-instance `flock` prevents concurrent runs.
-- **It verifies, not just hopes.** After the rebuild, `install.sh` resolves the
+- **It verifies, not just hopes.** After the rebuild, `dsdt-fix.sh` resolves the
   images from `/etc/mkinitcpio.d/*.preset` (the same source the boot-entry
   tooling uses) and checks each with `lsinitcpio --early` for
   `kernel/firmware/acpi/dsdt.aml`. If any of the freshly built images lacks it,
@@ -64,16 +64,16 @@ toolchain (with `limine-mkinitcpio` on CachyOS).
 patch:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/dsdt-fix.sh | sudo bash
 ```
 
 **Common usage:**
 
 ```bash
-sudo bash install.sh                                  # official: auto-detect via DMI
-sudo bash install.sh --target 8C4D/F.29               # official: pick board/BIOS explicitly
-sudo bash install.sh /path/to/dsdt.aml                # your own .aml, used as-is (no checks)
-sudo bash install.sh --rebuild                        # force an initramfs rebuild
+sudo bash dsdt-fix.sh                                  # official: auto-detect via DMI
+sudo bash dsdt-fix.sh --target 8C4D/F.29               # official: pick board/BIOS explicitly
+sudo bash dsdt-fix.sh /path/to/dsdt.aml                # your own .aml, used as-is (no checks)
+sudo bash dsdt-fix.sh --rebuild                        # force an initramfs rebuild
 ```
 
 ### Options
@@ -158,12 +158,12 @@ request or issue at <https://github.com/zxzxn3/omen-transcend-16-dsdt-fix>:
 - add one row to [`dsdt-fix/index.md`](dsdt-fix/index.md) so the installer can
   list it.
 
-`install.sh` also prints this invitation at the end of a successful run.
+`dsdt-fix.sh` also prints this invitation at the end of a successful run.
 
 ## Repository layout
 
 ```
-install.sh                 # the auto-detecting installer (single file)
+dsdt-fix.sh                # the auto-detecting installer (single file)
 dsdt-fix/index.md          # published patches: one --target per row
 dsdt-fix/<board>/<bios>/   # one patch per board × BIOS
   dsdt.aml                 # compiled override table (what gets installed)

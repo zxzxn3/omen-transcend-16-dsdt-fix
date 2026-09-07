@@ -6,7 +6,7 @@
 # and the acpi_override hook. Full rationale lives in the README.
 #
 # One-line install (auto-detects board/BIOS from DMI):
-#   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/dsdt-fix.sh | sudo bash
 #
 # Flow: args -> pick the .aml (operand, or repo by --target/DMI) -> download
 # -> DSDT signature check -> prepare (staged, no writes) -> confirm ->
@@ -50,7 +50,7 @@ on_exit() {
       mv -f "$STAGE/config.orig" "$MKINITCPIO_CONF"
       echo "  [OK] Restored $MKINITCPIO_CONF (reverted HOOKS edit)." >&2
     fi
-    echo "  Re-run install.sh to try again." >&2
+    echo "  Re-run dsdt-fix.sh to try again." >&2
     rm -f -- "$OVERRIDE_DIR/dsdt.aml.new" "$MKINITCPIO_CONF.new" 2>/dev/null || true
   fi
   [ -n "$STAGE" ] && rm -rf -- "$STAGE"
@@ -67,7 +67,7 @@ SRC=""      # optional operand: a local dsdt.aml
 
 show_usage() {
   cat <<'EOF'
-Usage: sudo bash install.sh [OPTIONS] [dsdt.aml PATH]
+Usage: sudo bash dsdt-fix.sh [OPTIONS] [dsdt.aml PATH]
 
 Options:
   -f, --force      Skip the machine-match soft warning and the interactive
