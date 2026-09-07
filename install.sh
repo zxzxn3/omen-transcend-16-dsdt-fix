@@ -2,14 +2,18 @@
 # =====================================================================
 # HP OMEN Transcend 16 (board 8C4D / u1xxx) — DSDT override installer
 #
-# 用法:   sudo bash install.sh [dsdt.aml 的路径或 URL]
+# 用法:   sudo bash install.sh [选项] [dsdt.aml 的路径或 URL]
+#        -f, --force   忽略「板号不符」警告（默认：交互询问[默认否]；非交互安全中止）
+#        -h, --help    显示英文帮助
+#        --           其后的参数一律视为 .aml 路径
+# 退出码: 0 成功 / 1 运行错误（如板号中止/下载失败）/ 2 用法错误
 # 默认:   自动解析 .aml（优先级）：
-#           1) 命令行第 1 个参数（本地路径或 http(s):// URL）
+#           1) 命令行第一个非选项参数（本地路径或 http(s):// URL）
 #           2) 本脚本同目录的 dsdt.aml
 #           3) 否则按「本机 BIOS 版本」自动去仓库 dsdt-fix/<BIOS>/ 下载对应版本
 # 一行安装（在 CachyOS 上，无需先 clone/挂载；会自动检测 BIOS 并拉取对应补丁）：
 #   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/install.sh | sudo bash
-# 板号:   期望 8C4D（OMEN Transcend 16-u1xxx）。不一致 → 软警告：交互询问、非交互警告后继续。
+# 板号:   期望 8C4D（OMEN Transcend 16-u1xxx）。不一致 → 软警告：交互询问（默认否）/ 非交互安全中止；-f/--force 可忽略。
 # BIOS:   无精确匹配时，主动查询仓库里已有的版本让你挑（交互）；非交互则报错并列出可选版本。
 # 功能:   把编译好的 dsdt.aml 装进 initramfs（含 acpi_override hook），然后重建 initramfs
 # 幂等:   可重复运行，不会重复插入 hook；同一份 .aml 已装则跳过。
@@ -37,6 +41,91 @@ HOOK_NAME="acpi_override"                    # 负责把上面的 .aml 打进 in
 # stdin 是不是终端？决定能否交互（读键盘输入）。
 if [ -t 0 ]; then INTERACTIVE=1; else INTERACTIVE=0; fi
 
+# ---- 0.5 参数解析（GNU 命令行惯例）----
+# 规范遵循：
+#   - 长短选项：-f/--force、-h/--help；未知选项/多余操作数 → 用法错误 exit 2
+#   - 短选项可合并成簇：-fh ≡ -f -h
+#   - -- 终止选项解析：其后一律视为操作数（可安装以 - 开头的 .aml 文件）
+#   - 选项与操作数可混排（GNU 习惯：install.sh path.aml -f 也合法）
+#   - 操作数至多一个 = dsdt.aml 路径或 URL
+FORCE=0
+SRC=""
+
+show_usage() {
+  cat <<'EOF'
+Usage: sudo bash install.sh [OPTIONS] [dsdt.aml PATH or URL]
+
+Options:
+  -f, --force   Bypass the board-mismatch safety check and force install.
+  -h, --help    Show this help and exit.
+  --            Treat all remaining arguments as the .aml operand.
+
+Operand (at most one):
+  Local path or http(s) URL of a dsdt.aml to install. When omitted, the
+  script falls back to ./dsdt.aml next to itself, or auto-downloads
+  dsdt-fix/<BIOS>/dsdt.aml for the detected BIOS from the GitHub repo.
+
+Exit status:
+  0  success
+  1  runtime error (e.g. board check aborted, download failed)
+  2  usage / argument error
+EOF
+}
+
+# 用法错误：信息 + usage 打到 stderr，退出码 2（用法错误 ≠ 运行错误）。
+usage_err() {
+  echo "Error: $*" >&2
+  echo >&2
+  show_usage >&2
+  exit 2
+}
+
+# GNU 风格解析：选项与操作数可混排（GNU 习惯）；`--` 之后一律视为操作数；
+# 短选项支持簇（-fh ≡ -f -h）；未知选项/多余操作数 → 用法错误(exit 2)。
+while [ "$#" -gt 0 ]; do
+  ARG="$1"; shift
+  case "$ARG" in
+    --)
+      # `--` 终止选项：其后所有参数（哪怕以 - 开头）都当操作数
+      while [ "$#" -gt 0 ]; do
+        if [ -z "$SRC" ]; then SRC="$1"; else
+          usage_err "too many arguments: only one dsdt.aml path/URL allowed"
+        fi
+        shift
+      done
+      ;;
+    --force|-f) FORCE=1 ;;
+    --help|-h)  show_usage; exit 0 ;;
+    --*)        usage_err "unknown option: $ARG" ;;
+    -*)
+      # 短选项簇：-fh、-f、-x…（去掉前导 - 后逐字符解析）
+      CLUSTER="${ARG#-}"
+      if [ -z "$CLUSTER" ]; then
+        # 单独的 "-" 按惯例视为操作数
+        if [ -z "$SRC" ]; then SRC="$ARG"; else
+          usage_err "too many arguments: only one dsdt.aml path/URL allowed"
+        fi
+      else
+        IDX=0
+        while [ "$IDX" -lt "${#CLUSTER}" ]; do
+          CH="${CLUSTER:$IDX:1}"; IDX=$((IDX+1))
+          case "$CH" in
+            f) FORCE=1 ;;
+            h) show_usage; exit 0 ;;
+            *) usage_err "unknown option: -$CH" ;;
+          esac
+        done
+      fi
+      ;;
+    *)
+      # 普通操作数：dsdt.aml 路径或 URL（至多一个）
+      if [ -z "$SRC" ]; then SRC="$ARG"; else
+        usage_err "too many arguments: only one dsdt.aml path/URL allowed"
+      fi
+      ;;
+  esac
+done
+
 # ---- 1. 必须是 root ----
 # id -u 返回当前用户 ID；root 是 0。放在最前，别等下载/询问后才报错。
 if [ "$(id -u)" -ne 0 ]; then
@@ -54,7 +143,7 @@ BOARD_NAME="$(printf '%s' "$BOARD_NAME" | xargs)"
 PRODUCT_NAME="$(printf '%s' "$PRODUCT_NAME" | xargs)"
 BIOS_VER="$(printf '%s' "$BIOS_VER" | xargs)"
 
-echo "Detected: board=${BOARD_NAME:-unknown} (expect ${EXPECTED_BOARD}), BIOS=${BIOS_VER:-unknown}"
+echo "Expect board ${EXPECTED_BOARD}, found board=${BOARD_NAME:-?}, BIOS=${BIOS_VER:-?}"
 
 # ---- 3. 板号软警告（不硬拒）----
 # 板号是对的主键：不同代 Transcend 板号不同（u1=8C4D, u0=8BB3），能拦住拿错补丁。
@@ -62,14 +151,19 @@ echo "Detected: board=${BOARD_NAME:-unknown} (expect ${EXPECTED_BOARD}), BIOS=${
 if [ -n "$BOARD_NAME$PRODUCT_NAME" ] \
    && ! printf '%s\n%s' "$BOARD_NAME" "$PRODUCT_NAME" | grep -q "$EXPECTED_BOARD"; then
   echo "  [WARN] This machine does not look like board ${EXPECTED_BOARD} (${BOARD_NAME:-?} / ${PRODUCT_NAME:-?})." >&2
-  if [ "$INTERACTIVE" -eq 1 ]; then
+  if [ "$FORCE" -eq 1 ]; then
+    echo "  [OK] Ignoring board check (-f/--force)." >&2
+  elif [ "$INTERACTIVE" -eq 1 ]; then
     read -r -p "  Continue anyway? [y/N] " REPLY
     case "$REPLY" in
       y|Y|yes|Yes) ;;
       *) echo "  Aborted." >&2; exit 1 ;;
     esac
   else
-    echo "  Continuing with warnings (this is a reversible runtime override)." >&2
+    # 非交互无法征询用户 → 走保守安全路径：默认当作「否」中止；提示可加 -f/--force 忽略。
+    echo "  Aborted: board check failed and this is a non-interactive run (safety default = No)." >&2
+    echo "           Re-run with -f/--force to ignore this check." >&2
+    exit 1
   fi
 fi
 
@@ -77,9 +171,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---- 4. 解析 .aml 来源 ----
-if [ -n "${1:-}" ]; then
-  # (a) 用户显式指定（路径或 URL）→ 用它
-  SRC="$1"
+if [ -n "$SRC" ]; then
+  # (a) 用户显式指定（路径或 URL）—— 已在「参数解析」阶段写入 $SRC，直接用
+  :
 elif [ -f "$SCRIPT_DIR/dsdt.aml" ]; then
   # (b) 本脚本同目录有 dsdt.aml（clone/复制场景）→ 用它
   SRC="$SCRIPT_DIR/dsdt.aml"
