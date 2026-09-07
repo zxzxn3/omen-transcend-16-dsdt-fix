@@ -3,11 +3,10 @@
 # HP OMEN Transcend 16 (BIOS F.29) — DSDT override installer
 #
 # 用法:   sudo bash install.sh [dsdt.aml 的路径或 URL]
-# 默认:   不传参数时，自动使用「本脚本所在目录」下的 dsdt.aml
+# 默认:   自动解析 .aml：命令行参数 > 同目录 dsdt.aml > 仓库官方 dsdt.aml
 # 远程:   sudo bash install.sh https://.../dsdt.aml   （会先下载到临时文件）
-# 一行安装（在 CachyOS 上，无需先 clone/挂载）：
-#   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/dsdt-fix/install.sh \
-#     | sudo bash -s -- https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/dsdt-fix/dsdt.aml
+# 一行安装（在 CachyOS 上，无需先 clone/挂载；.aml 会自动从仓库拉取）：
+#   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/dsdt-fix/install.sh | sudo bash
 # 功能:   把编译好的 dsdt.aml 装进 initramfs（含 acpi_override hook），然后重建 initramfs
 # 幂等:   可重复运行，不会重复插入 hook
 # 注意:   curl | bash 时 stdin 不是终端，脚本会自动退回非交互的 mkinitcpio -P
@@ -28,10 +27,20 @@ set -euo pipefail
 # 这样 SCRIPT_DIR 永远指向 install.sh 自己所在的文件夹。
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 第 1 个参数（$1）给了就用它；没给就用「同目录下的 dsdt.aml」。
-# 之所以默认同目录：你能执行本脚本，就说明脚本和 .aml 基本是放在一起被复制/挂载过来的。
-# 也支持直接传 http(s):// URL —— 供「一行 curl | bash」远程安装使用。
-SRC="${1:-$SCRIPT_DIR/dsdt.aml}"
+# 仓库里官方维护的 dsdt.aml 地址（当「本地没有 .aml」时回退到这里，实现真正的一行安装）。
+DEFAULT_REMOTE_AML="https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-u1024tx-f29-dsdt-fix/main/dsdt-fix/dsdt.aml"
+
+# .aml 来源按优先级取：
+#   1) 命令行第 1 个参数（本地路径或 http(s):// URL）
+#   2) 本脚本同目录的 dsdt.aml（本地 clone/复制场景）
+#   3) 仓库里的官方 dsdt.aml（远程 curl | bash 场景 → 这样一行安装不用带任何参数）
+if [ -n "${1:-}" ]; then
+  SRC="$1"
+elif [ -f "$SCRIPT_DIR/dsdt.aml" ]; then
+  SRC="$SCRIPT_DIR/dsdt.aml"
+else
+  SRC="$DEFAULT_REMOTE_AML"
+fi
 
 OVERRIDE_DIR="/etc/initcpio/acpi_override"  # initramfs 里放 DSDT 覆盖文件的固定目录
 MKINITCPIO_CONF="/etc/mkinitcpio.conf"       # mkinitcpio 主配置文件
