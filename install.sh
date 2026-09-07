@@ -3,19 +3,20 @@
 # HP OMEN Transcend 16 (board 8C4D / u1xxx) — DSDT override installer
 #
 # 用法:   sudo bash install.sh [选项] [dsdt.aml 的路径或 URL]
-#        -f, --force    别拦也别问：忽略「板号不符」安全闸，且跳过交互式确认
-#        --rebuild      即使 .aml 未变化也强制重建 initramfs（恢复上次可能没建成的状态）
-#        -h, --help     显示英文帮助
-#        --            其后的参数一律视为 .aml 路径
-# 退出码: 0 成功 / 1 运行错误（板号中止/下载失败/校验失败/重建失败）/ 2 用法错误
-# 默认:   自动解析 .aml（优先级）：
-#           1) 命令行第一个非选项参数（本地路径或 http(s):// URL）
-#           2) 本脚本同目录的 dsdt.aml
-#           3) 否则按「本机 BIOS 版本」自动去仓库 dsdt-fix/<BIOS>/ 下载对应版本
-# 一行安装（在 CachyOS 上，无需先 clone/挂载；会自动检测 BIOS 并拉取对应补丁）：
+#        -f, --force        别拦也别问：跳过「显式参数与本机不符」软警告，且跳过交互确认
+#        --rebuild          即使 .aml 未变化也强制重建 initramfs（恢复上次可能没建成的状态）
+#        --board <板号>     官方下拉补丁时指定板号（如 8C4D）
+#        --bios  <版本>     官方下拉补丁时指定 BIOS（如 F.29）
+#        -h, --help         显示英文帮助
+#        --                 其后的参数一律视为 .aml 路径
+# 退出码: 0 成功 / 1 运行错误（找不到补丁/下载失败/校验失败/重建失败）/ 2 用法错误
+# 来源:   给了路径或 URL → 直接用，不做检测/警告（可能是自编译补丁，责任在用户）。
+#         没给 → 默认从官方 repo 拉：优先用 --board/--bios，否则按本机 DMI 自动检测；
+#               精确命中 → 安装（显式参数与本机不符时软警告）；
+#               未收录 → 打印可用补丁表并退出，让你显式给对参数。
+# 结构:   官方补丁按 dsdt-fix/<board>/<bios>/dsdt.aml 组织；可用清单见 dsdt-fix/index.txt。
+# 一行安装（在 CachyOS 上，自动检测 DMI 并拉取对应补丁）：
 #   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/install.sh | sudo bash
-# 板号:   期望 8C4D（OMEN Transcend 16-u1xxx）。不一致 → 软警告：交互询问（默认否）/ 非交互安全中止；-f/--force 可忽略。
-# BIOS:   精确匹配 dsdt-fix/<BIOS>/；未收录时回退到最近的已发布版本需要确认（-f/--force 或显式路径才放行）。
 # 功能:   把编译好的 dsdt.aml 装进 initramfs（含 acpi_override hook），然后重建 initramfs
 # 幂等:   同补丁已装 + hook 已在 → 无事可做(exit 0)；加 --rebuild 可强制重建。
 # 安全:   两阶段：准备阶段不改真文件；重建前最后一刻才 apply；中断/重建失败自动还原；
@@ -33,11 +34,6 @@ REPO_OWNER="zxzxn3"
 REPO_NAME="omen-transcend-16-dsdt-fix"
 REPO_BRANCH="main"
 RAW_BASE="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}"
-EXPECTED_BOARD="8C4D"            # OMEN Transcend 16-u1xxx 的板号（软警告用）
-
-# 仓库已收录的 DSDT 版本目录（新 → 旧）。新增 dsdt-fix/<ver>/ 时，在此表最前加一项。
-# 只用于「本机 BIOS 尚未收录」时自动回退到最近的已发布版本；精确匹配不依赖此表。
-FALLBACK_BIOSES=("F.29")
 
 OVERRIDE_DIR="/etc/initcpio/acpi_override"  # initramfs 里放 DSDT 覆盖文件的固定目录
 MKINITCPIO_CONF="/etc/mkinitcpio.conf"       # mkinitcpio 主配置文件
@@ -91,11 +87,14 @@ trap 'exit 130' INT     # Ctrl-C：先触发 on_exit（还原+清理）再退出
 trap 'exit 143' TERM
 
 # ---- 0.5 参数解析（POSIX 惯例：选项在前，操作数在后）----
-#   - 长短选项：-f/--force、-h/--help；未知选项/多余操作数 → 用法错误 exit 2
-#   - -- 终止选项解析：其后一律视为操作数（可安装以 - 开头的 .aml 文件）
+#   - 标志类：-f/--force、--rebuild、-h/--help
+#   - 带值类：--board <板号>、--bios <BIOS>（官方下拉补丁时用；支持 --opt=值 写法）
+#   - -- 终止选项解析：其后一律视为操作数
 #   - 操作数至多一个 = dsdt.aml 路径或 URL
 FORCE=0
 REBUILD=0
+BOARD=""
+BIOS=""
 SRC=""
 
 show_usage() {
@@ -103,21 +102,24 @@ show_usage() {
 Usage: sudo bash install.sh [OPTIONS] [dsdt.aml PATH or URL]
 
 Options:
-  -f, --force   Do not stop or ask: bypass the board-mismatch safety check and
-                skip the interactive confirmation before applying/rebuilding.
-      --rebuild  Force an initramfs rebuild even if the override is unchanged
-                (use to recover when a previous run may not have finished).
-  -h, --help    Show this help and exit.
-  --            Treat all remaining arguments as the .aml operand.
+  -f, --force      Do not stop or ask: skip the machine-match soft warning and
+                   the interactive confirmation before applying/rebuilding.
+      --rebuild     Force an initramfs rebuild even if the override is unchanged
+                   (use to recover when a previous run may not have finished).
+      --board ID    Board id for the official download (e.g. 8C4D).
+      --bios VER    BIOS version for the official download (e.g. F.29).
+  -h, --help       Show this help and exit.
+  --               Treat all remaining arguments as the .aml operand.
 
 Operand (at most one):
-  Local path or http(s) URL of a dsdt.aml to install. When omitted, the
-  script falls back to ./dsdt.aml next to itself, or auto-downloads
-  dsdt-fix/<BIOS>/dsdt.aml for the detected BIOS from the GitHub repo.
+  Local path or http(s) URL of a dsdt.aml to install. When given, the file is
+  used as-is with no checks (it may be a self-built patch). When omitted, the
+  patch is downloaded from the GitHub repo as dsdt-fix/<board>/<bios>/dsdt.aml,
+  using --board/--bios or the machine DMI (board + BIOS).
 
 Exit status:
   0  success
-  1  runtime error (e.g. board check aborted, download failed)
+  1  runtime error (e.g. patch not found, download failed)
   2  usage / argument error
 EOF
 }
@@ -135,6 +137,14 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -f|--force) FORCE=1; shift ;;
     --rebuild)  REBUILD=1; shift ;;
+    --board)
+      [ "$#" -ge 2 ] || usage_err "--board needs a value (e.g. --board 8C4D)"
+      BOARD="$2"; shift 2 ;;
+    --board=*)  BOARD="${1#*=}"; shift ;;
+    --bios)
+      [ "$#" -ge 2 ] || usage_err "--bios needs a value (e.g. --bios F.29)"
+      BIOS="$2"; shift 2 ;;
+    --bios=*)   BIOS="${1#*=}"; shift ;;
     -h|--help)  show_usage; exit 0 ;;
     --)         shift; break ;;      # 其后全部视为操作数
     -*)         usage_err "unknown option: $1" ;;
@@ -163,100 +173,89 @@ if [ -d /run/lock ] && command -v flock >/dev/null 2>&1; then
   flock -n 9 || { echo "Error: another dsdt-override install is already running." >&2; exit 1; }
 fi
 
-# ---- 2. 检测本机 板号 + BIOS 版本（sysfs，普通用户可读）----
-SYS_DMI="/sys/class/dmi/id"
-BOARD_NAME="$(cat "$SYS_DMI/board_name"    2>/dev/null || true)"
-PRODUCT_NAME="$(cat "$SYS_DMI/product_name" 2>/dev/null || true)"
-BIOS_VER="$(cat "$SYS_DMI/bios_version"    2>/dev/null || true)"
-# 去掉首尾空白（xargs 无参数时就是 trim）
-BOARD_NAME="$(printf '%s' "$BOARD_NAME" | xargs)"
-PRODUCT_NAME="$(printf '%s' "$PRODUCT_NAME" | xargs)"
-BIOS_VER="$(printf '%s' "$BIOS_VER" | xargs)"
-
-echo "Board: ${BOARD_NAME:-?} (expected ${EXPECTED_BOARD}), BIOS: ${BIOS_VER:-?}"
-
-# ---- 3. 板号软警告（不硬拒）----
-# 板号是对的主键：不同代 Transcend 板号不同（u1=8C4D, u0=8BB3），能拦住拿错补丁。
-# 检查 board_name 或 product_name 里有没有出现 8C4D。
-if [ -n "$BOARD_NAME$PRODUCT_NAME" ] \
-   && ! printf '%s\n%s' "$BOARD_NAME" "$PRODUCT_NAME" | grep -q "$EXPECTED_BOARD"; then
-  echo "  [WARN] This machine does not look like board ${EXPECTED_BOARD} (${BOARD_NAME:-?} / ${PRODUCT_NAME:-?})." >&2
-  if [ "$FORCE" -eq 1 ]; then
-    echo "  [OK] Ignoring board check (-f/--force)." >&2
-  elif [ "$INTERACTIVE" -eq 1 ]; then
-    read -r -p "  Continue anyway? [y/N] " REPLY
-    case "$REPLY" in
-      y|Y|yes|Yes) ;;
-      *) echo "  Aborted." >&2; exit 1 ;;
-    esac
-  else
-    # 非交互无法征询用户 → 走保守安全路径：默认当作「否」中止；提示可加 -f/--force 忽略。
-    echo "  Aborted: board check failed in non-interactive run." >&2
-    echo "  Re-run with -f/--force to ignore this check." >&2
-    exit 1
-  fi
-fi
-
-# ${BASH_SOURCE[0]} = 本脚本路径（跨目录/各种调用都准）；cd+pwd 拿绝对路径。
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ---- 4. 解析 .aml 来源 ----
+# ---- 2. 来源解析 ----
+# 规则：给了路径/URL → 直接用，不做检测/警告（可能是自编译补丁，责任在用户）。
+#       没给 → 官方 repo：用 --board/--bios，否则按本机 DMI 自动检测；
+#              精确命中 → 安装；显式参数与本机不符 → 软警告；
+#              未收录 → 打印可用补丁表并退出，让用户显式给对参数。
 if [ -n "$SRC" ]; then
-  # (a) 用户显式指定（路径或 URL）—— 已在「参数解析」阶段写入 $SRC，直接用
-  :
-elif [ -f "$SCRIPT_DIR/dsdt.aml" ]; then
-  # (b) 本脚本同目录有 dsdt.aml（clone/复制场景）→ 用它
-  SRC="$SCRIPT_DIR/dsdt.aml"
+  # (a) 用户显式指定（本地路径或 URL）—— 直接用
+  echo "Using user-provided dsdt.aml: $SRC (no checks; assumed correct by user)."
 else
-  # (c) 官方路线：按 BIOS 自动选择 dsdt-fix/<BIOS>/dsdt.aml
+  # (b) 官方 repo 下拉
   if ! command -v curl >/dev/null 2>&1; then
-    echo "Error: official route requires 'curl' (sudo pacman -S curl)." >&2
+    echo "Error: official download requires 'curl' (sudo pacman -S curl)." >&2
     exit 1
   fi
-  echo "No local dsdt.aml — auto-selecting dsdt-fix/<BIOS>/dsdt.aml from GitHub."
-  # 先 HEAD 探测「本机 BIOS」的精确目录是否存在（raw 返回 200 / 404）
-  EXACT_URL="$RAW_BASE/dsdt-fix/${BIOS_VER}/dsdt.aml"
-  if [ "$(curl -s -o /dev/null -w '%{http_code}' "$EXACT_URL" || true)" = "200" ]; then
-    SRC="$EXACT_URL"
+
+  # b1. 确定 board/bios：显式参数 > DMI 自动检测
+  SYS_DMI="/sys/class/dmi/id"
+  DETECTED_BOARD="$(cat "$SYS_DMI/board_name" 2>/dev/null | xargs 2>/dev/null || true)"
+  DETECTED_BIOS="$(cat "$SYS_DMI/bios_version" 2>/dev/null | xargs 2>/dev/null || true)"
+  USES_EXPLICIT=0
+  if [ -n "$BOARD" ] || [ -n "$BIOS" ]; then
+    # 用了其中一个就必须两个都给出
+    if [ -z "$BOARD" ] || [ -z "$BIOS" ]; then
+      echo "Error: --board and --bios must be given together." >&2
+      exit 2
+    fi
+    USES_EXPLICIT=1
+  elif [ -z "$DETECTED_BOARD" ] || [ -z "$DETECTED_BIOS" ]; then
+    echo "Error: could not detect board/BIOS from this machine; pass --board and --bios." >&2
+    exit 1
   else
-    # 本机 BIOS 尚未发布 → 自动回退到「最近的已发布版本」（FALLBACK_BIOSES 新→旧逐个 HEAD）。
-    # 新增 dsdt-fix/<ver>/ 时记得把版本加进 FALLBACK_BIOSES 最前面。
-    echo "  [WARN] No DSDT published yet for BIOS '${BIOS_VER}'." >&2
-    FOUND_URL=""
-    FOUND_VER=""
-    for ver in "${FALLBACK_BIOSES[@]}"; do
-      url="$RAW_BASE/dsdt-fix/${ver}/dsdt.aml"
-      if [ "$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)" = "200" ]; then
-        FOUND_URL="$url"; FOUND_VER="$ver"
-        break
-      fi
-    done
-    if [ -n "$FOUND_URL" ]; then
-      echo "  [WARN] No DSDT published for BIOS '${BIOS_VER}' — closest published is ${FOUND_VER}." >&2
-      echo "         Prefer an exact match? Pass an explicit .aml path/URL instead." >&2
-      # 版本回退 = 装「非本 BIOS」的补丁，风险与板号不符同级 → 默认保守：
-      # 交互询问（默认否）/ 非交互中止；-f/--force 或显式路径/URL 才放行。
+    BOARD="$DETECTED_BOARD"
+    BIOS="$DETECTED_BIOS"
+  fi
+  if [ "$USES_EXPLICIT" -eq 1 ]; then
+    echo "Patch target: board=${BOARD} BIOS=${BIOS} (explicit)"
+  else
+    echo "Patch target: board=${BOARD} BIOS=${BIOS} (auto-detected from this machine)"
+  fi
+
+  # b2. HEAD 探测精确补丁是否存在
+  PATCH_URL="$RAW_BASE/dsdt-fix/${BOARD}/${BIOS}/dsdt.aml"
+  if [ "$(curl -s -o /dev/null -w '%{http_code}' "$PATCH_URL" || true)" = "200" ]; then
+    # b2a. 显式参数且与本机 DMI 不符 → 软警告（默认保守：交互询问/非交互中止，-f 放行）
+    if [ "$USES_EXPLICIT" -eq 1 ] \
+       && [ -n "$DETECTED_BOARD$DETECTED_BIOS" ] \
+       && { [ "$BOARD" != "$DETECTED_BOARD" ] || [ "$BIOS" != "$DETECTED_BIOS" ]; }; then
+      echo "  [WARN] You requested ${BOARD}/${BIOS}, but this machine reports ${DETECTED_BOARD}/${DETECTED_BIOS}." >&2
       if [ "$FORCE" -ne 1 ]; then
         if [ "$INTERACTIVE" -eq 1 ]; then
-          read -r -p "  Install ${FOUND_VER} anyway (built for a different BIOS)? [y/N] " REPLY
+          read -r -p "  Install ${BOARD}/${BIOS} anyway? [y/N] " REPLY
           case "$REPLY" in
             y|Y|yes|Yes) ;;
             *) echo "  Aborted." >&2; exit 1 ;;
           esac
         else
-          echo "  Aborted: refusing to auto-install a fallback version in non-interactive mode." >&2
-          echo "         Re-run with -f/--force, or pass an explicit .aml path/URL." >&2
+          echo "  Aborted: the requested patch does not match this machine (non-interactive)." >&2
+          echo "         Re-run with -f/--force, or fix --board/--bios." >&2
           exit 1
         fi
       else
-        echo "  [OK] Ignoring version fallback check (-f/--force)." >&2
+        echo "  [OK] Ignoring machine-match warning (-f/--force)." >&2
       fi
-      SRC="$FOUND_URL"
-    else
-      echo "  [WARN] Could not reach GitHub, or no DSDT published for this machine." >&2
-      echo "         Pass an explicit .aml path/URL instead." >&2
-      exit 1
     fi
+    SRC="$PATCH_URL"
+  else
+    # b2b. 未收录 → 拉 index.txt 渲染可用补丁表，提示重跑并退出（不自动回退）
+    echo "  [WARN] No published patch for board=${BOARD} BIOS=${BIOS}." >&2
+    echo "  Available patches (board | BIOS versions):"
+    IDX_DATA="$(curl -fsSL "$RAW_BASE/dsdt-fix/index.txt" 2>/dev/null || true)"
+    if [ -n "$IDX_DATA" ]; then
+      printf '%s\n' "$IDX_DATA" | awk '
+        /^[[:space:]]*#/ || NF == 0 { next }
+        { if (!($1 in have)) { have[$1] = 1; b[++nb] = $1 }
+          a[$1] = (a[$1] == "" ? "" : a[$1] ",") $2 }
+        END { for (i = 1; i <= nb; i++) print "    " b[i] " | " a[b[i]] }
+      ' || true
+    else
+      echo "    (could not fetch the patch list - offline?)"
+    fi
+    echo "  Re-run with --board <ID> --bios <VER> matching an available patch," >&2
+    echo "  or pass an explicit .aml path/URL." >&2
+    exit 1
   fi
 fi
 

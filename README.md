@@ -11,20 +11,24 @@
 - 开机卡死 / panic —— `AE_AML_OPERAND_TYPE`，oops in `acpi_ns_build_normalized_path`
 - 内置喇叭无声
 
-> 本仓库只服务 **board 8C4D（u1xxx）**。其他 OMEN Transcend 修订（如 u0 = 8BB3）
-> 的 DSDT 不同，请勿盲装 —— install.sh 会检测板号并软警告。
+> 目前只发布了 **board 8C4D / BIOS F.29** 一份补丁。仓库结构按
+> `dsdt-fix/<board>/<bios>/` 组织（清单见 `dsdt-fix/index.txt`），方便日后收录其它板/BIOS。
+> 官方下拉会按 **board×BIOS** 精确匹配；你显式指定的与本机不符时给软警告。
+> 自己给路径/URL 装 `.aml` 属「自负责任」，安装器不做任何匹配判断。
 > **触控板未做修改**（本机原始固件下可用，社区触控板改动已尝试并回退）。
 
 ## 仓库结构
 
-- `install.sh`（根）—— 自动检测 **板号 + BIOS** 的安装器：
-  读取 sysfs → 打印 → 板号软警告 → 按 BIOS 路由到 `dsdt-fix/<BIOS>/`，
-  无精确匹配时列出可用版本让你选（交互）。
-- `dsdt-fix/<BIOS>/` —— 每个固件版本一份补丁：
+- `install.sh`（根）—— 安装器：
+  - 给路径/URL → 直接用（不判断，可能是自编译补丁）
+  - 不给 → 从官方 repo 拉：用 `--board/--bios`，否则按本机 DMI 自动检测；
+    精确命中即装（显式参数与本机不符→软警告）；未收录→打印可用补丁表并退出。
+- `dsdt-fix/<board>/<bios>/` —— 每台机器（板）× 固件版本 一份补丁：
   - `dsdt.aml` — 编译好的覆盖表（安装用）
   - `dsdt.dsl` / `dsdt-original.dsl` / `dsdt-original.dat` — 源码与原始表
   - `patch.diff` — **每处改动的 问题/原理/出处（带 URL）**，改动细节以它为准
-- 目前版本：`F.29/`（真实补丁）、`F.28/`（⚠️ FAKE，仅测路由）。
+- `dsdt-fix/index.txt` —— 已发布补丁清单（`<board> <bios>` 一行一个），供列表显示。
+- 目前只有：`dsdt-fix/8C4D/F.29/`。
 
 ## 安装（CachyOS / Arch + Limine）
 
@@ -34,24 +38,23 @@
 curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/install.sh | sudo bash
 ```
 
-**本地安装**（从仓库里跑，或指向任意 .aml）：
+**常用用法**：
 
 ```bash
-sudo bash install.sh                     # 自动：同目录 dsdt.aml → 按 BIOS 路由
-sudo bash install.sh dsdt-fix/F.29/dsdt.aml
-sudo bash install.sh /path/to/dsdt.aml   # 或任意 URL
+sudo bash install.sh                                  # 官方自动：按本机 DMI 拉 dsdt-fix/<board>/<bios>/dsdt.aml
+sudo bash install.sh --board 8C4D --bios F.29         # 官方：显式指定板/BIOS
+sudo bash install.sh /path/to/dsdt.aml                # 本地：直接用，不判断（可自编译）
+sudo bash install.sh --rebuild                        # 强制重建（上次可能没建成时恢复）
 ```
 
-安装器会：复制 `.aml` 到 `/etc/initcpio/acpi_override/` → 确保 `acpi_override`
-hook（已存在则跳过，幂等）→ 备份旧 override（时间戳、无限保留）→ 重建 initramfs
-（交互用 `limine-mkinitcpio`，`curl | bash` 下自动用非交互 `mkinitcpio -P`）。
-
-> BIOS 不匹配：交互时列出仓库已有版本让你选或中止；非交互报错并列出。
-> 板号不是 8C4D：交互询问是否继续，非交互警告后继续。
+安装器是两阶段：先准备（校验 DSDT 签名、暂存、交互确认），最后一刻才覆盖真文件并
+重建 initramfs（交互用 `limine-mkinitcpio`，`curl | bash` 自动非交互 `mkinitcpio -P`）。
+中断/失败自动还原、退出即清理临时文件、单实例锁——不弄脏机器。
+`-f/--force` 跳过「显式参数与本机不符」的软警告和交互确认。
 
 ## 本补丁改了什么（F.29，共 3 处）
 
-> 每处的问题/原理/出处细节见 [`dsdt-fix/F.29/patch.diff`](dsdt-fix/F.29/patch.diff) 内的注释。
+> 每处的问题/原理/出处细节见 [`dsdt-fix/8C4D/F.29/patch.diff`](dsdt-fix/8C4D/F.29/patch.diff) 内的注释。
 
 1. **提升 OEM revision** `0x2 → 0x3`（内核才会接受覆盖）。
    出处：[j0hnwang F27 Change 1](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)。
@@ -78,8 +81,8 @@ dmesg | grep -i AE_AML_OPERAND_TYPE   # 应为空
 
 - **运行时覆盖**：不写固件、不会变砖、**不影响 Windows**。
 - **只对当前这个 Linux 生效**；其他 Linux（含 live U 盘）需各自重做。
-- **严格对应 板号 × BIOS**：本仓库针对 **8C4D** 与所列 BIOS 版本；升级 BIOS 后需
-  重新 dump/适配（旧补丁有时能继续用，install.sh 会按你的 BIOS 找对应版本）。
+- **严格对应 板号 × BIOS**：官方下拉按 `dsdt-fix/<board>/<bios>/` 精确匹配；升级
+  BIOS 后若没有对应补丁，安装器会列出已有补丁并让你显式 `--board/--bios` 选，绝不自动回退。
 - 触控板**未修改**，本机原始固件下可用。
 
 ## 参考与致谢
