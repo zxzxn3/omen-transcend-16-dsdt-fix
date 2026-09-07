@@ -15,7 +15,7 @@
 # 一行安装（在 CachyOS 上，无需先 clone/挂载；会自动检测 BIOS 并拉取对应补丁）：
 #   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/install.sh | sudo bash
 # 板号:   期望 8C4D（OMEN Transcend 16-u1xxx）。不一致 → 软警告：交互询问（默认否）/ 非交互安全中止；-f/--force 可忽略。
-# BIOS:   精确匹配 dsdt-fix/<BIOS>/；尚未收录 → [WARN] 自动回退到最近的已发布版本（FALLBACK_BIOSES）。
+# BIOS:   精确匹配 dsdt-fix/<BIOS>/；未收录时回退到最近的已发布版本需要确认（-f/--force 或显式路径才放行）。
 # 功能:   把编译好的 dsdt.aml 装进 initramfs（含 acpi_override hook），然后重建 initramfs
 # 幂等:   同补丁已装 + hook 已在 → 无事可做(exit 0)；加 --rebuild 可强制重建。
 # 安全:   两阶段：准备阶段不改真文件；重建前最后一刻才 apply；中断/重建失败自动还原；
@@ -232,8 +232,25 @@ else
       fi
     done
     if [ -n "$FOUND_URL" ]; then
-      echo "  [WARN] Falling back to closest published version ${FOUND_VER}." >&2
-      echo "         Want a different one? Pass an explicit .aml path/URL instead." >&2
+      echo "  [WARN] No DSDT published for BIOS '${BIOS_VER}' — closest published is ${FOUND_VER}." >&2
+      echo "         Prefer an exact match? Pass an explicit .aml path/URL instead." >&2
+      # 版本回退 = 装「非本 BIOS」的补丁，风险与板号不符同级 → 默认保守：
+      # 交互询问（默认否）/ 非交互中止；-f/--force 或显式路径/URL 才放行。
+      if [ "$FORCE" -ne 1 ]; then
+        if [ "$INTERACTIVE" -eq 1 ]; then
+          read -r -p "  Install ${FOUND_VER} anyway (built for a different BIOS)? [y/N] " REPLY
+          case "$REPLY" in
+            y|Y|yes|Yes) ;;
+            *) echo "  Aborted." >&2; exit 1 ;;
+          esac
+        else
+          echo "  Aborted: refusing to auto-install a fallback version in non-interactive mode." >&2
+          echo "         Re-run with -f/--force, or pass an explicit .aml path/URL." >&2
+          exit 1
+        fi
+      else
+        echo "  [OK] Ignoring version fallback check (-f/--force)." >&2
+      fi
       SRC="$FOUND_URL"
     else
       echo "  [WARN] Could not reach GitHub, or no DSDT published for this machine." >&2
