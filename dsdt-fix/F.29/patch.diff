@@ -1,22 +1,24 @@
 ﻿# =====================================================================
-# HP OMEN Transcend 16 (BIOS F.29) DSDT 补丁 —— 共 3 处改动
-# 每处标注：问题 / 原理 / 出处
-# 注意：本文件是加了注释的 diff，仅供阅读；安装请用 dsdt.aml
+# HP OMEN Transcend 16 (BIOS F.29) DSDT patch — 3 changes in total
+# Each change annotated with: Problem / Rationale / Source
+# NOTE: this is a comment-annotated diff for reading only; install from dsdt.aml
 # =====================================================================
 
 diff --git a/dsdt-fix/dsdt-original.dsl b/dsdt-fix/dsdt.dsl
 index 8942b0a..3dd72b3 100644
 --- a/dsdt-fix/dsdt-original.dsl
 +++ b/dsdt-fix/dsdt.dsl
-# ── 改动 1：提升 OEM Revision（0x00000002 → 0x00000003）──────────────
-# 问题：内核 initrd DSDT 覆盖机制，只在 override 表的 OEM Revision
-#       比固件表的「更大」时才替换，否则被忽略（覆盖不生效）。
-# 原理：内核按 签名+OEMID+OEM Table ID 匹配，且要求
-#       oem_revision 严格大于固件表（固件=0x2，改 0x3 才满足）。
-# 出处：[内核文档 initrd_table_override](https://www.kernel.org/doc/html/latest/admin-guide/acpi/initrd_table_override.html)；
-#       [Arch Wiki「DSDT」](https://wiki.archlinux.org/title/DSDT)；
-#       j0hnwang F27 补丁「Change 1 (N)」→
-#       [github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)
+# ── Change 1: bump OEM Revision (0x00000002 → 0x00000003)──────────────
+# Problem: the kernel's initrd DSDT override mechanism only replaces the
+#          firmware table when the override table's OEM Revision is
+#          GREATER than the firmware's; otherwise it is silently ignored.
+# Rationale: the kernel matches on Signature + OEMID + OEM Table ID and
+#          requires oem_revision to be strictly greater than the firmware
+#          table (firmware = 0x2; bump to 0x3 so the override applies).
+# Source: [kernel doc initrd_table_override](https://www.kernel.org/doc/html/latest/admin-guide/acpi/initrd_table_override.html);
+#         [Arch Wiki "DSDT"](https://wiki.archlinux.org/title/DSDT);
+#         j0hnwang F27 patch "Change 1 (N)" →
+#         [github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)
 
 @@ -18,7 +18,7 @@
   *     Compiler ID      "HP  "
@@ -27,16 +29,19 @@ index 8942b0a..3dd72b3 100644
  {
      /*
       * iASL Warning: There were 238 external control methods found during
-# ── 改动 2：删除整个 Device (IC04) —— 开机卡死的根因 ───────────────
-# 问题：DSDT 在 _SB.PC00 作用域把 IC04 声明两次：
-#       整数字段 IC04(64bit) 与 Device(IC04)/HPIC0004 同名冲突。
-#       I2C4._PS3 调 SOD3(IC04) 时名字解析成 Device，
-#       SOD3 里 (GPCB()+Arg0) 把 Device 当整数做加法
-#       → AE_AML_OPERAND_TYPE → 约一半概率 Oops/死循环，开机卡死。
-# 原理：删掉冲突的 Device 后，IC04 永远只解析成整数字段，
-#       SOD3 与 I2CH(IC04) 都恢复。是「消除根因」而非「绕过症状」。
-# 出处：[LauriSarap/omen-transcend-16-linux-fix](https://github.com/LauriSarap/omen-transcend-16-linux-fix)（F.25 的 Fix 1）；
-#       [j0hnwang/OMEN-Transcend-16-ACPI-fix](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)「Change 2 (L)」
+# ── Change 2: delete the whole Device (IC04) — boot-hang root cause ───────────────
+# Problem: the DSDT declares IC04 twice in the _SB.PC00 scope:
+#          an integer field IC04 (64-bit) and a Device (IC04) with _HID
+#          "HPIC0004" collide on the same name. When I2C4._PS3 calls
+#          SOD3(IC04), the name resolves to the Device, and SOD3's
+#          (GPCB() + Arg0) arithmetic treats a Device as an integer
+#          → AE_AML_OPERAND_TYPE → ~50% chance of Oops/infinite loop
+#          and a boot hang.
+# Rationale: with the colliding Device removed, IC04 always resolves to
+#          the integer field, restoring both SOD3 and I2CH(IC04). This
+#          removes the root cause rather than working around a symptom.
+# Source: [LauriSarap/omen-transcend-16-linux-fix](https://github.com/LauriSarap/omen-transcend-16-linux-fix) (F.25 Fix 1);
+#         [j0hnwang/OMEN-Transcend-16-ACPI-fix](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix) "Change 2 (L)"
 
 @@ -36967,18 +36967,6 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000002)
          }
@@ -57,13 +62,14 @@ index 8942b0a..3dd72b3 100644
      Scope (_SB)
      {
          Device (PR00)
-# ── 改动 3：修复 Cirrus 音频字符串 —— 内置喇叭无声 ─────────────────
-# 问题：喇叭无声音。固件把属性名写成
-#       "cirrus,cirrus,boost-peak-milliamp"（vendor 前缀重复一次），
-#       Linux 的 Cirrus 驱动不识别这个错误字符串。
-# 原理：改成正确的 "cirrus,boost-peak-milliamp"，驱动才能解析喇叭参数。
-# 出处：[LauriSarap 的 Fix 2](https://github.com/LauriSarap/omen-transcend-16-linux-fix)；
-#       [no-hands-hand F27-Patch-Procedure.md「Change 6 (L)」](https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27)
+# ── Change 3: fix Cirrus audio string — built-in speakers silent ─────────────────
+# Problem: no sound from the speakers. The firmware writes the property
+#          as "cirrus,cirrus,boost-peak-milliamp" (vendor prefix repeated
+#          once), which the Linux Cirrus driver does not recognize.
+# Rationale: with the corrected "cirrus,boost-peak-milliamp", the driver
+#          can parse the speaker parameters again.
+# Source: [LauriSarap's Fix 2](https://github.com/LauriSarap/omen-transcend-16-linux-fix);
+#         [no-hands-hand F27-Patch-Procedure.md "Change 6 (L)"](https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27)
 
 @@ -107929,7 +107917,7 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000002)
  
