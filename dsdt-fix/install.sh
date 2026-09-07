@@ -19,6 +19,14 @@ set -euo pipefail
 # set -u      : 用到未定义变量就报错退出（抓笔误）
 # set -o pipefail : 管道里任何一环失败都算整体失败（防止 grep 失败被忽略）
 
+# ---- 前置检查：必须是 root ----
+# id -u 返回当前用户 ID；root 是 0。不是 0 就提示用 sudo 并退出。
+# 放在最前面：与其先弹「下载/询问」再失败，不如一进来就告诉用户要用 sudo。
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Error: please run with sudo.  e.g.  sudo bash install.sh" >&2
+  exit 1
+fi
+
 # ---------------------------------------------------------------
 # 0. 确定 .aml 路径
 # ---------------------------------------------------------------
@@ -59,9 +67,7 @@ HOOK_NAME="acpi_override"                    # 负责把上面的 .aml 打进 in
 # 若 SRC 以 http(s):// 开头，先 curl 下载到临时文件，再把 SRC 指向它。
 # TMP_AML 用 trap 在脚本退出时自动清理，避免 curl | bash 方式下残留垃圾。
 # [[ == http://* ]] 里的 * 是通配符，属于 bash 的模式匹配（比 case 更直观）。
-IS_REMOTE=0
 if [[ "$SRC" == http://* || "$SRC" == https://* ]]; then
-  IS_REMOTE=1
   if ! command -v curl >/dev/null 2>&1; then
     echo "Error: remote .aml requires 'curl' (sudo pacman -S curl)." >&2
     exit 1
@@ -77,13 +83,6 @@ if [[ "$SRC" == http://* || "$SRC" == https://* ]]; then
 fi
 # ---------------------------------------------------------------
 
-# ---- 1. 必须是 root ----
-# id -u 返回当前用户 ID；root 是 0。不是 0 就提示用 sudo 并退出。
-if [ "$(id -u)" -ne 0 ]; then
-  echo "Error: please run with sudo.  e.g.  sudo bash install.sh" >&2
-  exit 1
-fi
-
 # ---- 2. 源 .aml 必须存在 ----
 # -f 判断「是文件且存在」；不存在就报错退出，别让后面 cp 报一堆噪音。
 if [ ! -f "$SRC" ]; then
@@ -92,29 +91,22 @@ if [ ! -f "$SRC" ]; then
   exit 1
 fi
 
-# ---- 3. 备份旧 override + 复制新的 .aml ----
-# 若目标已有一个 dsdt.aml（= 上次装过的 override），先把旧文件留档成 dsdt.aml.bakN，再让新文件覆盖。
-# 编号规则：最新永远是 bak1，越旧数字越大；保留无限份，从不删除任何历史。
-echo "[1/3] Installing dsdt.aml (with backup) ..."
+# ---- 3. 若已装的是同一份 → 跳过；否则备份旧 override + 复制新的 .aml ----
+echo "[1/3] Installing dsdt.aml ..."
 mkdir -p "$OVERRIDE_DIR"        # -p：目标目录已存在也不报错（相当于「确保存在」）
 
+# cmp -s：静默比较两个文件是否逐字节相同。若已装的就是这一份，直接退出，省得重跑还白重建 initramfs。
+# 注：假设「已装且相同」意味着之前某次是完整装成功的（hook 也已在）。
+if [ -f "$OVERRIDE_DIR/dsdt.aml" ] && cmp -s "$SRC" "$OVERRIDE_DIR/dsdt.aml"; then
+  echo "  [OK] Installed dsdt.aml is already identical — nothing to do."
+  exit 0
+fi
+
+# 覆盖前备份旧的：命名带时间戳，只增不滚、永不删除 → 无限历史，且每次只加一个新文件（没有 O(N) 改名）。
 if [ -f "$OVERRIDE_DIR/dsdt.aml" ]; then
-  # 1) 先找出当前最大的备份编号（从 bak1 往上数到断档为止）
-  MAXBAK=0
-  i=1
-  while [ -f "$OVERRIDE_DIR/dsdt.aml.bak$i" ]; do
-    MAXBAK=$i
-    i=$((i+1))
-  done
-  # 2) 从最老（编号最大）往最新（bak1）依次后移一位：bakN -> bakN+1
-  #    从高处往下移，保证不会覆盖还没移走的文件；不移除任何备份 → 无限保留
-  while [ "$MAXBAK" -ge 1 ]; do
-    mv -f "$OVERRIDE_DIR/dsdt.aml.bak$MAXBAK" "$OVERRIDE_DIR/dsdt.aml.bak$((MAXBAK+1))"
-    MAXBAK=$((MAXBAK-1))
-  done
-  # 3) 现在的 dsdt.aml 即将被覆盖，先留一份为 bak1
-  cp -f "$OVERRIDE_DIR/dsdt.aml" "$OVERRIDE_DIR/dsdt.aml.bak1"
-  echo "  [OK] Previous override backed up -> dsdt.aml.bak1 (kept indefinitely)"
+  STAMP="$(date +%Y%m%d-%H%M%S)"
+  cp -f "$OVERRIDE_DIR/dsdt.aml" "$OVERRIDE_DIR/dsdt.aml.bak-$STAMP"
+  echo "  [OK] Previous override backed up -> dsdt.aml.bak-$STAMP"
 fi
 
 cp -v "$SRC" "$OVERRIDE_DIR/dsdt.aml"   # -v：verbose，打印它复制了哪个文件
@@ -163,16 +155,22 @@ if [ "$HOOK_OK" -ne 1 ]; then
       #   \bbase     其中出现的单词 base
       # 替换: \1 acpi_override  => 保留括号内到 base 为止的部分，再在后面加 hook 名
       # 效果: HOOKS=(base ...)  ->  HOOKS=(base acpi_override ...)
-      # 注: base 必须是 Arch 系默认的第一个 hook，hook 顺序很重要，acpi_override 要尽量靠前
-      sed -i -E 's/^(HOOKS=\([^)]*\bbase)\b/\1 '"${HOOK_NAME}"'/' "$f"
-      echo "  [OK] Inserted ${HOOK_NAME} right after 'base' in: $f"
-      INSERTED=1
-      break
+      # 注: base 是 Arch 系默认的第一个 hook。
+      #     关键：若该文件里没有 base，sed 不会改动但仍返回 0（“假成功”），
+      #     所以用「sed && 事后 grep 复查」来判断是否真的插进去了。
+      if sed -i -E 's/^(HOOKS=\([^)]*\bbase)\b/\1 '"${HOOK_NAME}"'/' "$f" \
+         && grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$f"; then
+        echo "  [OK] Inserted ${HOOK_NAME} right after 'base' in: $f"
+        INSERTED=1
+        break
+      else
+        echo "  [WARN] $f has HOOKS= but no 'base' to anchor on; skipped." >&2
+      fi
     fi
   done
   if [ "$INSERTED" -ne 1 ]; then
-    echo "  [WARN] Could not find a HOOKS=(...) line automatically." >&2
-    echo "         Please add '${HOOK_NAME}' to HOOKS manually, then re-run." >&2
+    echo "  [WARN] Could not add '${HOOK_NAME}' to HOOKS automatically." >&2
+    echo "         Please add it to the HOOKS line manually, then re-run." >&2
   fi
 fi
 
