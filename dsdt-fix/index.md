@@ -1,9 +1,10 @@
 # Available DSDT patches
 
-Each published patch lives in `dsdt-fix/<board>/<bios>/`. Add a row below whenever a
-new patch folder is published. `install.sh` parses this table when listing what is
-available (it skips the header and separator rows).
+Each published patch lives in `dsdt-fix/<board>/<bios>/` (e.g. `dsdt-fix/8C4D/F.29/`),
+so one patch = one `--target` value. Add a row below for every new patch folder;
+`install.sh` lists these when the requested patch is not published, and you pass
+the first column straight back as `--target`.
 
-| board | BIOS |
-|-------|------|
-| 8C4D  | F.29 |
+| --target |
+|----------|
+| 8C4D/F.29 |

@@ -13,8 +13,8 @@
 
 > 目前只发布了 **board 8C4D / BIOS F.29** 一份补丁。仓库结构按
 > `dsdt-fix/<board>/<bios>/` 组织，可用补丁清单见 [`dsdt-fix/index.md`](dsdt-fix/index.md)
-> （Markdown 表格，GitHub 自动渲染）。
-> 官方下拉会按 **board×BIOS** 精确匹配；你显式指定的与本机不符时给软警告。
+> （一行一个 `--target` 值，如 `8C4D/F.29`）。
+> 官方下拉会精确匹配 `--target`（板×BIOS）；你显式指定的与本机不符时给软警告。
 > 自己给路径/URL 装 `.aml` 属「自负责任」，安装器不做任何匹配判断。
 > **触控板未做修改**（本机原始固件下可用，社区触控板改动已尝试并回退）。
 
@@ -22,14 +22,14 @@
 
 - `install.sh`（根）—— 安装器：
   - 给路径/URL → 直接用（不判断，可能是自编译补丁）
-  - 不给 → 从官方 repo 拉：用 `--board/--bios`，否则按本机 DMI 自动检测；
-    精确命中即装（显式参数与本机不符→软警告）；未收录→打印可用补丁表并退出。
+  - 不给 → 从官方 repo 拉：用 `--target <board>/<bios>`，否则按本机 DMI 自动检测；
+    精确命中即装（显式参数与本机不符→软警告）；未收录→打印可用 `--target` 清单并退出。
 - `dsdt-fix/<board>/<bios>/` —— 每台机器（板）× 固件版本 一份补丁：
   - `dsdt.aml` — 编译好的覆盖表（安装用）
   - `dsdt.dsl` / `dsdt-original.dsl` / `dsdt-original.dat` — 源码与原始表
   - `patch.diff` — **每处改动的 问题/原理/出处（带 URL）**，改动细节以它为准
-- `dsdt-fix/index.md` —— 已发布补丁清单（Markdown 表格 `| board | BIOS |`），供 README
-  链接引用、也是 install.sh 列出「可用补丁」的数据源。
+- `dsdt-fix/index.md` —— 已发布补丁清单（每行一个 `--target`，形如 `8C4D/F.29`），供
+  README 链接引用、也是 install.sh 列出「可用补丁」的数据源。
 - 目前只有：[`dsdt-fix/8C4D/F.29/`](dsdt-fix/8C4D/F.29/)。
 
 ## 安装（CachyOS / Arch + Limine）
@@ -43,11 +43,11 @@ curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/m
 **常用用法**：
 
 ```bash
-sudo bash install.sh                                  # 官方自动：按本机 DMI 拉 dsdt-fix/<board>/<bios>/dsdt.aml
-sudo bash install.sh --board 8C4D --bios F.29         # 官方：显式指定板/BIOS
+sudo bash install.sh                                  # 官方自动：按本机 DMI 拉 dsdt-fix/<target>/dsdt.aml
+sudo bash install.sh --target 8C4D/F.29               # 官方：显式指定 板/BIOS
 sudo bash install.sh /path/to/dsdt.aml                # 本地：直接用，不判断（可自编译）
-sudo bash install.sh --board 8C4D --bios F.29 /clone/of/this-repo   # 本地镜像/自建 base
-sudo bash install.sh --board 8C4D --bios F.29 https://example.com/base  # 远程镜像/换 raw_base
+sudo bash install.sh --target 8C4D/F.29 /clone/of/this-repo     # 本地镜像/自建 base
+sudo bash install.sh --target 8C4D/F.29 https://example.com/base  # 远程镜像/换 raw_base
 sudo bash install.sh --rebuild                        # 强制重建（上次可能没建成时恢复）
 ```
 
@@ -85,8 +85,9 @@ dmesg | grep -i AE_AML_OPERAND_TYPE   # 应为空
 
 - **运行时覆盖**：不写固件、不会变砖、**不影响 Windows**。
 - **只对当前这个 Linux 生效**；其他 Linux（含 live U 盘）需各自重做。
-- **严格对应 板号 × BIOS**：官方下拉按 `dsdt-fix/<board>/<bios>/` 精确匹配；升级
-  BIOS 后若没有对应补丁，安装器会列出已有补丁并让你显式 `--board/--bios` 选，绝不自动回退。
+- **严格对应 板号 × BIOS**：官方下拉按 `dsdt-fix/<board>/<bios>/` 精确匹配（一个补丁 =
+  一个 `--target`，如 `8C4D/F.29`）；升级 BIOS 后若没有对应补丁，安装器会列出已有
+  `--target` 让你显式选，绝不自动回退。
 - 触控板**未修改**，本机原始固件下可用。
 
 ## 参考与致谢

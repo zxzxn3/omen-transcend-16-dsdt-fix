@@ -5,17 +5,16 @@
 # 用法:   sudo bash install.sh [选项] [dsdt.aml 的路径或 URL]
 #        -f, --force        别拦也别问：跳过「显式参数与本机不符」软警告，且跳过交互确认
 #        --rebuild          即使 .aml 未变化也强制重建 initramfs（恢复上次可能没建成的状态）
-#        --board <板号>     官方下拉补丁时指定板号（如 8C4D）
-#        --bios  <版本>     官方下拉补丁时指定 BIOS（如 F.29）
+#        --target <板/BIOS> 官方下拉补丁时指定目标，与 dsdt-fix/<target>/ 目录一致（如 8C4D/F.29）
 #        -h, --help         显示英文帮助
 #        --                 其后的参数一律视为 .aml 路径
 # 退出码: 0 成功 / 1 运行错误（找不到补丁/下载失败/校验失败/重建失败）/ 2 用法错误
-# 来源:   --board/--bios 必须成对给（都给出 或 都不给）。
-#         给了路径/URL 且没给 board/bios → 直接当 .aml 用（可能自编译补丁，责任在用户）。
-#         给了路径/URL 且给了 board/bios → 把它当 repo 根/镜像（本地 clone 或镜像 URL）拉补丁。
-#         没给路径/URL → 官方 repo；board/bios 显式或按本机 DMI 自动检测。
-#         未收录 → 打印该源 index.md 的可用补丁表并退出，让你显式给对参数。
-# 结构:   补丁按 dsdt-fix/<board>/<bios>/dsdt.aml 组织；可用清单见各源根下的 index.md。
+# 来源:   --target 可选；给了就显式指定，不给就按本机 DMI 自动检测（target=<board>/<bios>）。
+#         给了路径/URL 且没给 --target → 直接当 .aml 用（可能自编译补丁，责任在用户）。
+#         给了路径/URL 且给了 --target → 把它当 repo 根/镜像（本地 clone 或镜像 URL）拉补丁。
+#         没给路径/URL → 官方 repo；--target 显式或按本机 DMI 自动检测。
+#         未收录 → 打印该源 index.md 的可用 --target 清单并退出，绝不自动回退。
+# 结构:   补丁按 dsdt-fix/<target>/dsdt.aml（如 dsdt-fix/8C4D/F.29/）组织；可用清单见各源根 index.md。
 # 一行安装（在 CachyOS 上，自动检测 DMI 并拉取对应补丁）：
 #   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/install.sh | sudo bash
 # 功能:   把编译好的 dsdt.aml 装进 initramfs（含 acpi_override hook），然后重建 initramfs
@@ -30,7 +29,7 @@ set -euo pipefail
 # set -o pipefail : 管道里任何一环失败都算整体失败（防止 grep 失败被忽略）
 
 # ---- 0. 常量与基本状态 ----
-# 本脚本涉及的仓库信息（官方 .aml 都按 dsdt-fix/<BIOS>/dsdt.aml 组织）。
+# 本脚本涉及的仓库信息（官方 .aml 都按 dsdt-fix/<target>/dsdt.aml 组织，如 dsdt-fix/8C4D/F.29/）。
 REPO_OWNER="zxzxn3"
 REPO_NAME="omen-transcend-16-dsdt-fix"
 REPO_BRANCH="main"
@@ -89,13 +88,12 @@ trap 'exit 143' TERM
 
 # ---- 0.5 参数解析（POSIX 惯例：选项在前，操作数在后）----
 #   - 标志类：-f/--force、--rebuild、-h/--help
-#   - 带值类：--board <板号>、--bios <BIOS>（官方下拉补丁时用；支持 --opt=值 写法）
+#   - 带值类：--target <board>/<bios>（官方下拉补丁时用；支持 --target=<值> 写法）
 #   - -- 终止选项解析：其后一律视为操作数
 #   - 操作数至多一个 = dsdt.aml 路径或 URL
 FORCE=0
 REBUILD=0
-BOARD=""
-BIOS=""
+TARGET=""   # 形如 <board>/<bios>（如 8C4D/F.29），对应 dsdt-fix/<target>/；空 = 按 DMI 自动
 SRC=""
 
 show_usage() {
@@ -107,19 +105,19 @@ Options:
                    the interactive confirmation before applying/rebuilding.
       --rebuild     Force an initramfs rebuild even if the override is unchanged
                    (use to recover when a previous run may not have finished).
-      --board ID    Board id for the official download (e.g. 8C4D).
-      --bios VER    BIOS version for the official download (e.g. F.29).
+      --target ID   Board/BIOS for the official download, exactly as it appears
+                   in the dsdt-fix/<board>/<bios>/ tree (e.g. 8C4D/F.29).
   -h, --help       Show this help and exit.
   --               Treat all remaining arguments as the .aml operand.
 
 Operand (at most one):
-  - Without --board/--bios: a dsdt.aml local path or URL, used as-is with no
-    checks (it may be a self-built patch).
-  - With --board/--bios: a repo base (a local clone directory or an http(s)
-    mirror root) from which dsdt-fix/<board>/<bios>/dsdt.aml is taken,
-    instead of the GitHub repo.
+  - Without --target: a dsdt.aml local path or URL, used as-is with no checks
+    (it may be a self-built patch).
+  - With --target: a repo base (a local clone directory or an http(s) mirror
+    root) from which dsdt-fix/<target>/dsdt.aml is taken, instead of the
+    GitHub repo.
   - Omitted: the patch is pulled from the GitHub repo as
-    dsdt-fix/<board>/<bios>/dsdt.aml, using --board/--bios or the machine DMI.
+    dsdt-fix/<target>/dsdt.aml, using --target or the machine DMI.
 
 Available patches are listed in the dsdt-fix/index.md of the repo base.
 
@@ -143,14 +141,10 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -f|--force) FORCE=1; shift ;;
     --rebuild)  REBUILD=1; shift ;;
-    --board)
-      [ "$#" -ge 2 ] || usage_err "--board needs a value (e.g. --board 8C4D)"
-      BOARD="$2"; shift 2 ;;
-    --board=*)  BOARD="${1#*=}"; shift ;;
-    --bios)
-      [ "$#" -ge 2 ] || usage_err "--bios needs a value (e.g. --bios F.29)"
-      BIOS="$2"; shift 2 ;;
-    --bios=*)   BIOS="${1#*=}"; shift ;;
+    --target)
+      [ "$#" -ge 2 ] || usage_err "--target needs a value (e.g. --target 8C4D/F.29)"
+      TARGET="$2"; shift 2 ;;
+    --target=*) TARGET="${1#*=}"; shift ;;
     -h|--help)  show_usage; exit 0 ;;
     --)         shift; break ;;      # 其后全部视为操作数
     -*)         usage_err "unknown option: $1" ;;
@@ -164,9 +158,9 @@ if [ "$#" -gt 1 ]; then
 fi
 [ "$#" -eq 1 ] && SRC="$1"
 
-# --board/--bios 必须成对：都给出（本地/URL 当 repo 根用）或都不给（直接 .aml / DMI 自动）
-if { [ -n "$BOARD" ] || [ -n "$BIOS" ]; } && { [ -z "$BOARD" ] || [ -z "$BIOS" ]; }; then
-  usage_err "--board and --bios must be given together (both or neither)"
+# --target 格式必须 <board>/<bios>（与 dsdt-fix/<target>/ 目录一致）；非空且不合规 → 用法错误
+if [ -n "$TARGET" ] && ! printf '%s' "$TARGET" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
+  usage_err "--target must look like '<board>/<bios>', e.g. 8C4D/F.29 (got: $TARGET)"
 fi
 
 # ---- 1. 必须是 root ----
@@ -186,12 +180,12 @@ fi
 
 # ---- 2. 来源解析 ----
 # 三种情况：
-#  A) 给了路径/URL 且没给 board/bios → 直接把它当 .aml 装（不判断，可能自编译补丁）。
-#  B) 给了路径/URL 且给了 board+bios → 把它当 repo 根/镜像（本地 clone 或 http(s) 基址），
-#     从中拉 dsdt-fix/<board>/<bios>/dsdt.aml —— 相当于换了 raw_base。
-#  C) 没给路径/URL → 用官方 repo（RAW_BASE），board/bios 显式或按本机 DMI 自动检测。
-# B/C 未收录 → 打印该源的可用补丁表（解析 index.md 表格）并退出，绝不自动回退。
-if [ -n "$SRC" ] && [ -z "$BOARD" ] && [ -z "$BIOS" ]; then
+#  A) 给了路径/URL 且没给 --target → 直接把它当 .aml 装（不判断，可能自编译补丁）。
+#  B) 给了路径/URL 且给了 --target → 把它当 repo 根/镜像（本地 clone 或 http(s) 基址），
+#     从中拉 dsdt-fix/<target>/dsdt.aml —— 相当于换了 raw_base。
+#  C) 没给路径/URL → 用官方 repo（RAW_BASE），--target 显式或按本机 DMI 自动检测。
+# B/C 未收录 → 打印该源可用 --target 清单（解析 index.md）并退出，绝不自动回退。
+if [ -n "$SRC" ] && [ -z "$TARGET" ]; then
   # A) 直接模式
   echo "Using user-provided dsdt.aml: $SRC (no checks; assumed correct by user)."
 else
@@ -206,28 +200,28 @@ else
   BASE_LOCAL=0
   if [[ "$BASE" == http://* || "$BASE" == https://* ]]; then BASE_LOCAL=0; else BASE_LOCAL=1; fi
 
-  # 确定 board/bios：显式 > DMI 自动
+  # 确定 target：显式 > DMI 自动（target=<board>/<bios>，与 dsdt-fix/<target>/ 目录一致）
   SYS_DMI="/sys/class/dmi/id"
   DETECTED_BOARD="$(cat "$SYS_DMI/board_name" 2>/dev/null | xargs 2>/dev/null || true)"
   DETECTED_BIOS="$(cat "$SYS_DMI/bios_version" 2>/dev/null | xargs 2>/dev/null || true)"
   USES_EXPLICIT=0
-  if [ -n "$BOARD" ]; then
+  if [ -n "$TARGET" ]; then
     USES_EXPLICIT=1
   elif [ -z "$DETECTED_BOARD" ] || [ -z "$DETECTED_BIOS" ]; then
-    echo "Error: could not detect board/BIOS from this machine; pass --board and --bios." >&2
+    echo "Error: could not detect board/BIOS from this machine; pass --target <board>/<bios>." >&2
     exit 1
   else
-    BOARD="$DETECTED_BOARD"; BIOS="$DETECTED_BIOS"
+    TARGET="${DETECTED_BOARD}/${DETECTED_BIOS}"
   fi
   if [ "$USES_EXPLICIT" -eq 1 ]; then
-    echo "Patch target: board=${BOARD} BIOS=${BIOS} (explicit)"
+    echo "Patch target: $TARGET (explicit)"
   else
-    echo "Patch target: board=${BOARD} BIOS=${BIOS} (auto-detected from this machine)"
+    echo "Patch target: $TARGET (auto-detected from this machine)"
   fi
   [ "$BASE_LOCAL" -eq 1 ] && echo "Repo base (local): $BASE"
 
   # 探测补丁是否存在
-  PATCH_REL="dsdt-fix/${BOARD}/${BIOS}/dsdt.aml"
+  PATCH_REL="dsdt-fix/${TARGET}/dsdt.aml"
   FOUND=0
   if [ "$BASE_LOCAL" -eq 1 ]; then
     [ -f "${BASE%/}/$PATCH_REL" ] && FOUND=1
@@ -236,21 +230,21 @@ else
   fi
 
   if [ "$FOUND" -eq 1 ]; then
-    # 显式参数且与本机 DMI 不符 → 软警告（默认保守：交互询问/非交互中止，-f 放行）
+    # 显式 target 且与本机 DMI 不符 → 软警告（默认保守：交互询问/非交互中止，-f 放行）
     if [ "$USES_EXPLICIT" -eq 1 ] \
        && [ -n "$DETECTED_BOARD$DETECTED_BIOS" ] \
-       && { [ "$BOARD" != "$DETECTED_BOARD" ] || [ "$BIOS" != "$DETECTED_BIOS" ]; }; then
-      echo "  [WARN] You requested ${BOARD}/${BIOS}, but this machine reports ${DETECTED_BOARD}/${DETECTED_BIOS}." >&2
+       && [ "$TARGET" != "${DETECTED_BOARD}/${DETECTED_BIOS}" ]; then
+      echo "  [WARN] You requested $TARGET, but this machine reports ${DETECTED_BOARD}/${DETECTED_BIOS}." >&2
       if [ "$FORCE" -ne 1 ]; then
         if [ "$INTERACTIVE" -eq 1 ]; then
-          read -r -p "  Install ${BOARD}/${BIOS} anyway? [y/N] " REPLY
+          read -r -p "  Install $TARGET anyway? [y/N] " REPLY
           case "$REPLY" in
             y|Y|yes|Yes) ;;
             *) echo "  Aborted." >&2; exit 1 ;;
           esac
         else
           echo "  Aborted: the requested patch does not match this machine (non-interactive)." >&2
-          echo "         Re-run with -f/--force, or fix --board/--bios." >&2
+          echo "         Re-run with -f/--force, or fix --target." >&2
           exit 1
         fi
       else
@@ -259,9 +253,9 @@ else
     fi
     SRC="${BASE%/}/$PATCH_REL"
   else
-    # 未收录 → 显示该源的可用补丁（解析 index.md 表格）并退出（不自动回退）
-    echo "  [WARN] No patch for board=${BOARD} BIOS=${BIOS} in this repo base." >&2
-    echo "  Available patches (board | BIOS versions):"
+    # 未收录 → 显示该源可用 --target 清单（index.md 中每个 <board>/<bios>）并退出（不自动回退）
+    echo "  [WARN] No patch for target '$TARGET' in this repo base." >&2
+    echo "  Available patches (--target values):"
     IDX_DATA=""
     if [ "$BASE_LOCAL" -eq 1 ]; then
       IDX_DATA="$(cat "${BASE%/}/dsdt-fix/index.md" 2>/dev/null || true)"
@@ -269,19 +263,15 @@ else
       IDX_DATA="$(curl -fsSL "${BASE%/}/dsdt-fix/index.md" 2>/dev/null || true)"
     fi
     if [ -n "$IDX_DATA" ]; then
+      # 只取形如 <board>/<bios> 的单元格：表头/分隔线/正文因不是完整键而被跳过
       printf '%s\n' "$IDX_DATA" | awk -F'|' '
-        /^[[:space:]]*#/ || NF == 0 { next }
-        { b=$2; v=$3; gsub(/^[[:space:]]+|[[:space:]]+$/, "", b); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v) }
-        v ~ /^-+$/ { next }                 # 分隔线
-        v ~ /^[Bb][Ii][Oo][Ss]$/ { next }   # 表头
-        b == "" || v == "" { next }
-        { if (!(b in have)) { have[b]=1; order[++n]=b } a[b]=a[b] (a[b]==""?"":",") v }
-        END { for (i=1;i<=n;i++) print "    " order[i] " | " a[order[i]] }
+        { c=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", c) }
+        c ~ /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/ { print "    " c }
       ' || true
     else
       echo "    (could not read the patch list from this base)"
     fi
-    echo "  Re-run with --board <ID> --bios <VER> matching an available patch," >&2
+    echo "  Re-run with --target matching an available patch (e.g. --target 8C4D/F.29)," >&2
     echo "  or point at a specific .aml file." >&2
     exit 1
   fi
