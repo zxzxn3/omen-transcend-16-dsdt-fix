@@ -86,12 +86,9 @@ trap on_exit EXIT
 trap 'exit 130' INT     # Ctrl-C：先触发 on_exit 回滚再退出
 trap 'exit 143' TERM
 
-# ---- 0.5 参数解析（GNU 命令行惯例）----
-# 规范遵循：
+# ---- 0.5 参数解析（POSIX 惯例：选项在前，操作数在后）----
 #   - 长短选项：-f/--force、-h/--help；未知选项/多余操作数 → 用法错误 exit 2
-#   - 短选项可合并成簇：-fh ≡ -f -h
 #   - -- 终止选项解析：其后一律视为操作数（可安装以 - 开头的 .aml 文件）
-#   - 选项与操作数可混排（GNU 习惯：install.sh path.aml -f 也合法）
 #   - 操作数至多一个 = dsdt.aml 路径或 URL
 FORCE=0
 SRC=""
@@ -125,51 +122,22 @@ usage_err() {
   exit 2
 }
 
-# GNU 风格解析：选项与操作数可混排（GNU 习惯）；`--` 之后一律视为操作数；
-# 短选项支持簇（-fh ≡ -f -h）；未知选项/多余操作数 → 用法错误(exit 2)。
+# 解析：选项在前；遇到第一个操作数或 -- 即停止收选项，其余都算操作数。
 while [ "$#" -gt 0 ]; do
-  ARG="$1"; shift
-  case "$ARG" in
-    --)
-      # `--` 终止选项：其后所有参数（哪怕以 - 开头）都当操作数
-      while [ "$#" -gt 0 ]; do
-        if [ -z "$SRC" ]; then SRC="$1"; else
-          usage_err "too many arguments: only one dsdt.aml path/URL allowed"
-        fi
-        shift
-      done
-      ;;
-    --force|-f) FORCE=1 ;;
-    --help|-h)  show_usage; exit 0 ;;
-    --*)        usage_err "unknown option: $ARG" ;;
-    -*)
-      # 短选项簇：-fh、-f、-x…（去掉前导 - 后逐字符解析）
-      CLUSTER="${ARG#-}"
-      if [ -z "$CLUSTER" ]; then
-        # 单独的 "-" 按惯例视为操作数
-        if [ -z "$SRC" ]; then SRC="$ARG"; else
-          usage_err "too many arguments: only one dsdt.aml path/URL allowed"
-        fi
-      else
-        IDX=0
-        while [ "$IDX" -lt "${#CLUSTER}" ]; do
-          CH="${CLUSTER:$IDX:1}"; IDX=$((IDX+1))
-          case "$CH" in
-            f) FORCE=1 ;;
-            h) show_usage; exit 0 ;;
-            *) usage_err "unknown option: -$CH" ;;
-          esac
-        done
-      fi
-      ;;
-    *)
-      # 普通操作数：dsdt.aml 路径或 URL（至多一个）
-      if [ -z "$SRC" ]; then SRC="$ARG"; else
-        usage_err "too many arguments: only one dsdt.aml path/URL allowed"
-      fi
-      ;;
+  case "$1" in
+    -f|--force) FORCE=1; shift ;;
+    -h|--help)  show_usage; exit 0 ;;
+    --)         shift; break ;;      # 其后全部视为操作数
+    -*)         usage_err "unknown option: $1" ;;
+    *)          break ;;             # 第一个操作数 → 停止收选项
   esac
 done
+
+# 剩余全是操作数；只允许一个
+if [ "$#" -gt 1 ]; then
+  usage_err "too many arguments: only one dsdt.aml path/URL allowed"
+fi
+[ "$#" -eq 1 ] && SRC="$1"
 
 # ---- 1. 必须是 root ----
 # id -u 返回当前用户 ID；root 是 0。放在最前，别等下载/询问后才报错。
