@@ -83,9 +83,33 @@ if [ ! -f "$SRC" ]; then
   exit 1
 fi
 
-# ---- 3. 复制 .aml 到 initramfs 覆盖目录 ----
-echo "[1/3] Copying dsdt.aml -> ${OVERRIDE_DIR}/ ..."
+# ---- 3. 备份旧 override + 复制新的 .aml ----
+# 若目标已有一个 dsdt.aml（= 上次装过的 override），先把旧文件留档成 dsdt.aml.bakN，
+# 再让新文件覆盖。编号规则：最新的叫 bak1、越旧数字越大，超过上限的最老备份会被丢掉。
+# 这样每次重装/换版本后都留了几份历史，随时能回滚到上一个能用的版本。
+echo "[1/3] Installing dsdt.aml (with backup) ..."
 mkdir -p "$OVERRIDE_DIR"        # -p：目标目录已存在也不报错（相当于「确保存在」）
+
+BACKUP_MAX=5   # 最多保留 5 份历史备份（bak1..bak5）
+if [ -f "$OVERRIDE_DIR/dsdt.aml" ]; then
+  # 从最老的往下处理：先删掉超上限的最老备份，再把 bakN 依次改名为 bakN+1，腾出 bak1。
+  # 例如已有 bak1..bak5：删 bak5 → bak4→bak5 → bak3→bak4 → bak2→bak3 → bak1→bak2。
+  i=$BACKUP_MAX
+  while [ "$i" -ge 1 ]; do
+    if [ -f "$OVERRIDE_DIR/dsdt.aml.bak$i" ]; then
+      if [ "$i" -eq "$BACKUP_MAX" ]; then
+        rm -f "$OVERRIDE_DIR/dsdt.aml.bak$i"          # 最老的那份，丢
+      else
+        mv -f "$OVERRIDE_DIR/dsdt.aml.bak$i" "$OVERRIDE_DIR/dsdt.aml.bak$((i+1))"
+      fi
+    fi
+    i=$((i-1))
+  done
+  # 现在的 dsdt.aml 即将被覆盖，先留一份为 bak1
+  cp -f "$OVERRIDE_DIR/dsdt.aml" "$OVERRIDE_DIR/dsdt.aml.bak1"
+  echo "  [OK] Previous override backed up -> dsdt.aml.bak1"
+fi
+
 cp -v "$SRC" "$OVERRIDE_DIR/dsdt.aml"   # -v：verbose，打印它复制了哪个文件
 
 # ---- 4. 确保 mkinitcpio 配置里启用了 acpi_override hook ----
