@@ -5,8 +5,7 @@
 - `dsdt.aml` — 编译好的覆盖表（安装用）
 - `dsdt.dsl` — 补丁后的反汇编源码
 - `dsdt-original.dsl` / `dsdt-original.dat` — 原始表备份
-- `patch.diff` — 补丁差异（附每处问题/原理/出处）
-- `README.md` — 该版本的说明
+- `patch.diff` — 补丁差异（每处问题/原理/出处，带 URL，改动细节以它为准）
 
 ## 目录
 
