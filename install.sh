@@ -143,7 +143,7 @@ BOARD_NAME="$(printf '%s' "$BOARD_NAME" | xargs)"
 PRODUCT_NAME="$(printf '%s' "$PRODUCT_NAME" | xargs)"
 BIOS_VER="$(printf '%s' "$BIOS_VER" | xargs)"
 
-echo "Expect board ${EXPECTED_BOARD}, found board=${BOARD_NAME:-?}, BIOS=${BIOS_VER:-?}"
+echo "Board: ${BOARD_NAME:-?} (expected ${EXPECTED_BOARD}), BIOS: ${BIOS_VER:-?}"
 
 # ---- 3. 板号软警告（不硬拒）----
 # 板号是对的主键：不同代 Transcend 板号不同（u1=8C4D, u0=8BB3），能拦住拿错补丁。
@@ -161,7 +161,8 @@ if [ -n "$BOARD_NAME$PRODUCT_NAME" ] \
     esac
   else
     # 非交互无法征询用户 → 走保守安全路径：默认当作「否」中止；提示可加 -f/--force 忽略。
-    echo "  Aborted: board check failed in non-interactive run (use -f/--force to ignore" >&2
+    echo "  Aborted: board check failed in non-interactive run (safety default = No)." >&2
+    echo "  Re-run with -f/--force to ignore this check." >&2
     exit 1
   fi
 fi
@@ -182,7 +183,7 @@ else
     echo "Error: official route requires 'curl' (sudo pacman -S curl)." >&2
     exit 1
   fi
-  echo "[route] No local dsdt.aml; auto-selecting dsdt-fix by BIOS from GitHub."
+  echo "No local dsdt.aml — auto-selecting dsdt-fix/<BIOS>/dsdt.aml from GitHub."
   OFFICIAL_URL="$RAW_BASE/dsdt-fix/${BIOS_VER}/dsdt.aml"
   # 先 HEAD 探测该精确版本是否存在（raw 返回 200 / 404）
   HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' "$OFFICIAL_URL" || true)"
@@ -271,7 +272,8 @@ if [ -f "$OVERRIDE_DIR/dsdt.aml" ]; then
   echo "  [OK] Previous override backed up -> dsdt.aml.bak-$STAMP"
 fi
 
-cp -v "$SRC" "$OVERRIDE_DIR/dsdt.aml"   # -v：verbose，打印它复制了哪个文件
+cp -f "$SRC" "$OVERRIDE_DIR/dsdt.aml"    # 复制新 override（前面已做备份/去重）
+echo "  [OK] Installed -> $OVERRIDE_DIR/dsdt.aml"
 
 # ---- 8. 确保 mkinitcpio 配置里启用了 acpi_override hook ----
 echo "[2/3] Checking mkinitcpio HOOKS ..."
@@ -331,5 +333,5 @@ fi
 echo ""
 echo "Done. You can reboot now (do NOT use acpi=off / noapic)."
 echo "After reboot, verify with:"
-echo '  dmesg | grep -i "override|tainted"             # expect: DSDT override applied / kernel tainted'
-echo "  dmesg | grep -i AE_AML_OPERAND_TYPE  # expect: no output"
+echo '  dmesg | grep -iE "override|taint"   # expect: DSDT override applied / kernel tainted'
+echo '  dmesg | grep -i AE_AML_OPERAND_TYPE # expect: no output'
