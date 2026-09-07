@@ -1,112 +1,218 @@
-# HP OMEN Transcend 16 (u1xxx / board 8C4D) — Linux ACPI DSDT Fix
+# HP OMEN Transcend 16 — Linux ACPI (DSDT) fix
 
 > ⚠️ **AI-agent-led project.** This repository was primarily produced by an AI
 > coding agent (GitHub Copilot, powered by DeepSeek) under human guidance and
 > review. The diagnosis and the DSDT patch were cross-checked against the public
-> Bugzilla #221847 report and existing community fixes.
+> Bugzilla [#221847] report and the existing community fixes listed below.
 
-修复 **HP OMEN Transcend 16（16-U1024TX，板号 8C4D，u1 系列）** 的 ACPI bug，
-让 Linux 不再：
+Fixes the broken ACPI on the **HP OMEN Transcend 16** (16-U1024TX / u1-series,
+board `8C4D`, BIOS `F.29`) so Linux no longer:
 
-- 开机卡死 / panic —— `AE_AML_OPERAND_TYPE`，oops in `acpi_ns_build_normalized_path`
-- 内置喇叭无声
+- Hangs / panics at boot — `AE_AML_OPERAND_TYPE`, oops in
+  `acpi_ns_build_normalized_path` (the reason people previously booted with
+  `acpi=off noapic`).
+- Comes up with silent built-in speakers.
 
-> 目前只发布了 **board 8C4D / BIOS F.29** 一份补丁。仓库结构按
-> `dsdt-fix/<board>/<bios>/` 组织，可用补丁清单见 [`dsdt-fix/index.md`](dsdt-fix/index.md)
-> （一行一个 `--target` 值，如 `8C4D/F.29`）。
-> 官方下拉会精确匹配 `--target`（板×BIOS）；你显式指定的与本机不符时给软警告。
-> 自己给路径/URL 装 `.aml` 属「自负责任」，安装器不做任何匹配判断。
-> **触控板未做修改**（本机原始固件下可用，社区触控板改动已尝试并回退）。
+> **Status.** One patch is published: **board `8C4D` / BIOS `F.29`**. The
+> published patch list lives in [`dsdt-fix/index.md`](dsdt-fix/index.md)
+> (one `--target` per row, e.g. `8C4D/F.29`). Patches are matched exactly by
+> board × BIOS — **never** an automatic fallback to a different BIOS.
 
-## 仓库结构
+## How it works
 
-- `install.sh`（根）—— 安装器：
-  - 给路径/URL → 直接用（不判断，可能是自编译补丁）
-  - 不给 → 从官方 repo 拉：用 `--target <board>/<bios>`，否则按本机 DMI 自动检测；
-    精确命中即装（显式参数与本机不符→软警告）；未收录→打印可用 `--target` 清单并退出。
-- `dsdt-fix/<board>/<bios>/` —— 每台机器（板）× 固件版本 一份补丁：
-  - `dsdt.aml` — 编译好的覆盖表（安装用）
-  - `dsdt.dsl` / `dsdt-original.dsl` / `dsdt-original.dat` — 源码与原始表
-  - `patch.diff` — **每处改动的 问题/原理/出处（带 URL）**，改动细节以它为准
-- `dsdt-fix/index.md` —— 已发布补丁清单（每行一个 `--target`，形如 `8C4D/F.29`），供
-  README 链接引用、也是 install.sh 列出「可用补丁」的数据源。
-- 目前只有：[`dsdt-fix/8C4D/F.29/`](dsdt-fix/8C4D/F.29/)。
+`install.sh` applies the DSDT override at the initramfs level using
+mkinitcpio's standard `acpi_override` hook:
 
-## 安装（CachyOS / Arch + Limine）
+1. Place the patched table at `/etc/initcpio/acpi_override/dsdt.aml`.
+2. Make sure `acpi_override` is in the `HOOKS=(base ...)` list of the config
+   that is actually used to build initramfs.
+3. Rebuild the initramfs so the hook packs `kernel/firmware/acpi/dsdt.aml`
+   into the early, uncompressed CPIO that the kernel reads at boot
+   (`CONFIG_ACPI_TABLE_UPGRADE` path).
 
-**一行远程安装**（自动检测 BIOS → 拉对应补丁）：
+On **CachyOS** the rebuild prefers `limine-mkinitcpio` (rebuild **and** refresh
+the auto-managed Limine entries); on plain Arch it falls back to
+`mkinitcpio -P`.
+
+### Safety design
+
+- **Two-phase.** The prepare phase never touches a real file — everything is
+  staged in a `mktemp -d` directory. Real files are only replaced at the last
+  moment (atomic `.new` + `mv`), right before the rebuild.
+- **Automatic rollback.** If anything fails before the rebuild is confirmed, an
+  `EXIT` trap restores the previous `dsdt.aml` and the mkinitcpio config from
+  staged originals. A single-instance `flock` prevents concurrent runs.
+- **It verifies, not just hopes.** After the rebuild, `install.sh` resolves the
+  images from `/etc/mkinitcpio.d/*.preset` (the same source the boot-entry
+  tooling uses) and checks each with `lsinitcpio --early` for
+  `kernel/firmware/acpi/dsdt.aml`. If checked images all lack it, the script
+  errors and rolls back.
+- **Conservative about configs.** Only `/etc/mkinitcpio.conf` is auto-edited.
+  If a preset builds from a *custom* config that lacks the hook, or the hook
+  can only live in a `.d` fragment, the script refuses up front and tells you
+  exactly what to add by hand.
+- **No litter.** Temporary files are removed on exit. The only persistent file
+  is a `dsdt.aml.bak-<timestamp>` kept before each overwrite.
+
+## Install (CachyOS / Arch + Limine)
+
+Requirements: `root`, `bash`, `curl` (for downloads), and the `mkinitcpio`
+toolchain (with `limine-mkinitcpio` on CachyOS).
+
+**One-line install** — auto-detects board/BIOS from DMI and pulls the matching
+patch:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/install.sh | sudo bash
 ```
 
-**常用用法**：
+**Common usage:**
 
 ```bash
-sudo bash install.sh                                  # 官方自动：按本机 DMI 拉 dsdt-fix/<target>/dsdt.aml
-sudo bash install.sh --target 8C4D/F.29               # 官方：显式指定 板/BIOS
-sudo bash install.sh /path/to/dsdt.aml                # 本地：直接用，不判断（可自编译）
-sudo bash install.sh --target 8C4D/F.29 /clone/of/this-repo     # 本地镜像/自建 base
-sudo bash install.sh --target 8C4D/F.29 https://example.com/base  # 远程镜像/换 raw_base
-sudo bash install.sh --rebuild                        # 强制重建 initramfs（即使内容未变）
+sudo bash install.sh                                  # official: auto-detect via DMI
+sudo bash install.sh --target 8C4D/F.29               # official: pick board/BIOS explicitly
+sudo bash install.sh /path/to/dsdt.aml                # your own .aml, used as-is (no checks)
+sudo bash install.sh --target 8C4D/F.29 /clone/of/this/repo      # local repo base / mirror
+sudo bash install.sh --target 8C4D/F.29 https://host/base       # remote mirror / changed raw base
+sudo bash install.sh --rebuild                        # force an initramfs rebuild
 ```
 
-安装器是两阶段：先准备（校验 DSDT 签名、暂存、交互确认），最后一刻才覆盖真文件并
-重建 initramfs（交互用 `limine-mkinitcpio`，`curl | bash` 自动非交互 `mkinitcpio -P`）。
-中断/失败自动还原、退出即清理临时文件、单实例锁——不弄脏机器。
-`-f/--force` 跳过「显式参数与本机不符」的软警告和交互确认。
+### Options
 
-## 本补丁改了什么（F.29，共 3 处）
+| Option | Meaning |
+|---|---|
+| `--target ID` | `<board>/<bios>` exactly as in the repo tree (e.g. `8C4D/F.29`). Omit to auto-detect from DMI. |
+| `-f, --force` | Skip the machine-match soft warning and the interactive confirmation. |
+| `--rebuild` | Force a rebuild even if the override is already installed and unchanged. |
+| `-h, --help` | Show help and exit. |
+| `--` | Treat all remaining arguments as the `.aml` operand. |
 
-> 每处的问题/原理/出处细节见 [`dsdt-fix/8C4D/F.29/patch.diff`](dsdt-fix/8C4D/F.29/patch.diff) 内的注释。
+### What the operand means
 
-1. **提升 OEM revision** `0x2 → 0x3`（内核才会接受覆盖）。
-   出处：[j0hnwang F27 Change 1](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)。
-2. **删除整个 `Device (IC04)`**（消除与整数字段 `IC04` 的同名冲突 —— 开机卡死根因）。
-   出处：[LauriSarap F.25 Fix 1](https://github.com/LauriSarap/omen-transcend-16-linux-fix)、
-   [j0hnwang Change 2](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)。
-3. **修复 Cirrus 音频字符串** `"cirrus,cirrus,boost-peak-milliamp"` → `"cirrus,boost-peak-milliamp"`（内置喇叭）。
-   出处：[LauriSarap F.25](https://github.com/LauriSarap/omen-transcend-16-linux-fix)、
-   [no-hands-hand F27](https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27)。
+- **Without `--target`** — the operand is a `dsdt.aml` path or URL, installed
+  as-is with **no** checks (e.g. a patch you compiled yourself; the only check
+  is the `DSDT` file signature).
+- **With `--target`** — the operand is treated as a **repo base** (a local
+  clone or an http(s) mirror root); the patch is taken from
+  `dsdt-fix/<target>/dsdt.aml` there instead of from GitHub.
+- **Omitted** — the patch is pulled from this GitHub repo, using `--target` or
+  the machine DMI.
 
-## 验证
+An explicit `--target` that does not match the machine's DMI triggers a soft
+warning (interactive `y/N`, or abort in non-interactive mode unless `-f`).
+
+## What this patch changes (F.29)
+
+Per-change rationale and sources are annotated in
+[`dsdt-fix/8C4D/F.29/patch.diff`](dsdt-fix/8C4D/F.29/patch.diff).
+
+1. **Bump OEM revision** `0x2 → 0x3` so the kernel accepts the override.
+   Source: [j0hnwang F27 change 1](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix).
+2. **Remove the whole `Device (IC04)`** — fixes the name collision with the
+   integer field `IC04` (the boot-hang root cause).
+   Sources: [LauriSarap F.25 fix 1](https://github.com/LauriSarap/omen-transcend-16-linux-fix),
+   [j0hnwang change 2](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix).
+3. **Fix the Cirrus audio string**
+   `"cirrus,cirrus,boost-peak-milliamp"` → `"cirrus,boost-peak-milliamp"`
+   (built-in speakers).
+   Sources: [LauriSarap F.25](https://github.com/LauriSarap/omen-transcend-16-linux-fix),
+   [no-hands-hand F27](https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27).
+
+## Verify after installing
+
+The installer already checks (pre-reboot) that the override made it into the
+built initramfs:
 
 ```bash
-dmesg | grep -i override              # 应看到 DSDT override applied + kernel tainted
-dmesg | grep -i AE_AML_OPERAND_TYPE   # 应为空
+lsinitcpio --early /boot/<your-initramfs> | grep kernel/firmware/acpi/dsdt.aml
 ```
 
-## 撤销（万一启动失败）
+Then, to actually use it:
 
-用 live USB 启动 → `chroot` 进系统 → 删掉 `/etc/initcpio/acpi_override/dsdt.aml`
-→ `mkinitcpio -P` → 重启。安装器每次覆盖前也会留 `dsdt.aml.bak-<时间>`，可拷回回滚。
+1. Remove `acpi=off` from the kernel command line (CachyOS/Limine:
+   `/etc/default/limine`, then `sudo limine-mkinitcpio`). You may **keep
+   `noapic`** for this first boot as a safety margin — `noapic` does not
+   disable ACPI, so the override still applies. (Do **not** verify under
+   `acpi=off`: it disables ACPI entirely, so the override never runs.)
+2. Reboot and confirm it is active:
+   ```bash
+   dmesg | grep -i "ACPI: Override"      # expect: DSDT ... this is unsafe: tainting kernel
+   dmesg | grep -i AE_AML_OPERAND_TYPE   # expect: no output
+   ```
+3. Built-in speakers should now work. Only once everything passes, also remove
+   `noapic`.
 
-## 重要说明
+## Rollback (if boot fails)
 
-- **运行时覆盖**：不写固件、不会变砖、**不影响 Windows**。
-- **只对当前这个 Linux 生效**；其他 Linux（含 live U 盘）需各自重做。
-- **严格对应 板号 × BIOS**：官方下拉按 `dsdt-fix/<board>/<bios>/` 精确匹配（一个补丁 =
-  一个 `--target`，如 `8C4D/F.29`）；升级 BIOS 后若没有对应补丁，安装器会列出已有
-  `--target` 让你显式选，绝不自动回退。
-- 触控板**未修改**，本机原始固件下可用。
+Re-add `acpi=off noapic`, then either:
 
-## 参考与致谢
+- restore the pre-change copy:
+  `/etc/initcpio/acpi_override/dsdt.aml.bak-<timestamp>` → `dsdt.aml`, remove
+  `acpi_override` from `HOOKS`, `sudo mkinitcpio -P`; or
+- boot a live USB → `chroot` → remove
+  `/etc/initcpio/acpi_override/dsdt.aml`, drop `acpi_override` from `HOOKS`,
+  `mkinitcpio -P`, reboot.
 
-- **Bugzilla [#221847](https://bugzilla.kernel.org/show_bug.cgi?id=221847)**
-  (by David Bue Pedersen) — 根因分析。
-- **[j0hnwang/OMEN-Transcend-16-ACPI-fix](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)**
-  — F.11 / F.12 / F.27 / F.28 补丁。
-- **[no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27](https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27)**
-  — F.27 完整补丁流程（6 处改动的来源）。
-- **[LauriSarap/omen-transcend-16-linux-fix](https://github.com/LauriSarap/omen-transcend-16-linux-fix)**
-  — F.25：删 `IC04` 设备 + Cirrus 音频字符串。
+## Share your own fix
 
-本仓库的 F.29 补丁是把以上社区补丁逐处适配到 16-U1024TX / F.29 固件上的结果。
+Made your own DSDT fix for this laptop (or a sibling board)? Open a pull
+request or issue at <https://github.com/zxzxn3/omen-transcend-16-dsdt-fix>:
 
-## 关于本项目
+- layout: `dsdt-fix/<board>/<bios>/dsdt.aml` (+ `.dsl` sources and a
+  `patch.diff` annotating each change and its source);
+- add one row to [`dsdt-fix/index.md`](dsdt-fix/index.md) so the installer can
+  list it.
 
-本仓库主要由 **AI 编程代理**（GitHub Copilot，底层 DeepSeek）在人工指导下完成：
-从 Windows 注册表只读导出 DSDT → 用 iasl 反汇编 → 定位根因（`Device (IC04)` 与
-整数字段 `IC04` 同名冲突）→ 套用社区完整补丁并逐处适配 → 编译并验证。
-诊断结论与社区仓库及 Bugzilla #221847 交叉验证一致。
+`install.sh` also prints this invitation at the end of a successful run.
+
+## Repository layout
+
+```
+install.sh                 # the auto-detecting installer (single file)
+dsdt-fix/index.md          # published patches: one --target per row
+dsdt-fix/<board>/<bios>/   # one patch per board × BIOS
+  dsdt.aml                 # compiled override table (what gets installed)
+  dsdt.dsl / dsdt-original.dsl / dsdt-original.dat
+  patch.diff               # per-change rationale + sources
+```
+
+Currently: [`dsdt-fix/8C4D/F.29/`](dsdt-fix/8C4D/F.29/).
+
+## Important notes
+
+- **Runtime-only override.** No firmware is written; nothing can brick the
+  machine; **Windows is unaffected**.
+- **Per-Linux-install.** It applies only to the Linux where you run it; other
+  systems (including live USBs) need the same steps.
+- **Strict board × BIOS match.** One patch = one `--target`. After a BIOS
+  upgrade with no matching patch, the installer lists what is available and
+  lets you pick explicitly — it never silently falls back.
+- The **touchpad is intentionally not modified** (it works with the stock
+  firmware; community touchpad changes were tried and reverted).
+
+## References & credits
+
+- **Bugzilla [#221847]** (by David Bue Pedersen) — root-cause analysis.
+- [j0hnwang/OMEN-Transcend-16-ACPI-fix] — F.11/F.12/F.27/F.28 patches.
+- [no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27] — full F.27 patch flow.
+- [LauriSarap/omen-transcend-16-linux-fix] — F.25: remove `IC04` device +
+  Cirrus audio string.
+
+This repo's F.29 patch adapts those community patches, item by item, to the
+16-U1024TX / F.29 firmware.
+
+## About this project
+
+Built mostly by an **AI coding agent** (GitHub Copilot, powered by DeepSeek)
+under human guidance: read-only export of the DSDT from the Windows registry →
+disassembly with `iasl` → root-cause identification (the `Device (IC04)` vs
+integer-field `IC04` name collision) → adaptation of the complete community
+patch → compilation and verification. Findings cross-check against the
+community repos and Bugzilla [#221847].
+
+[#221847]: https://bugzilla.kernel.org/show_bug.cgi?id=221847
+[j0hnwang/OMEN-Transcend-16-ACPI-fix]: https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix
+[no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27]: https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27
+[LauriSarap/omen-transcend-16-linux-fix]: https://github.com/LauriSarap/omen-transcend-16-linux-fix
+
 
