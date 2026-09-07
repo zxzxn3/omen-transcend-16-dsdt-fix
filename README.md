@@ -51,12 +51,16 @@ hook（已存在则跳过，幂等）→ 备份旧 override（时间戳、无限
 
 ## 本补丁改了什么（F.29，共 3 处）
 
-详见 [`dsdt-fix/F.29/patch.diff`](dsdt-fix/F.29/patch.diff) 内每处的
-「问题 / 原理 / 出处」。摘要：
+> 每处的问题/原理/出处细节见 [`dsdt-fix/F.29/patch.diff`](dsdt-fix/F.29/patch.diff) 内的注释。
 
-1. 提升 OEM revision `0x2 → 0x3`（内核才会接受覆盖）。
-2. 删除整个 `Device (IC04)`（消除与整数字段 `IC04` 的同名冲突 —— 开机卡死的根因）。
-3. 修复 Cirrus 音频字符串 `"cirrus,cirrus,boost-peak-milliamp"` → `"cirrus,boost-peak-milliamp"`（内置喇叭）。
+1. **提升 OEM revision** `0x2 → 0x3`（内核才会接受覆盖）。
+   出处：[j0hnwang F27 Change 1](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)。
+2. **删除整个 `Device (IC04)`**（消除与整数字段 `IC04` 的同名冲突 —— 开机卡死根因）。
+   出处：[LauriSarap F.25 Fix 1](https://github.com/LauriSarap/omen-transcend-16-linux-fix)、
+   [j0hnwang Change 2](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)。
+3. **修复 Cirrus 音频字符串** `"cirrus,cirrus,boost-peak-milliamp"` → `"cirrus,boost-peak-milliamp"`（内置喇叭）。
+   出处：[LauriSarap F.25](https://github.com/LauriSarap/omen-transcend-16-linux-fix)、
+   [no-hands-hand F27](https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27)。
 
 ## 验证
 

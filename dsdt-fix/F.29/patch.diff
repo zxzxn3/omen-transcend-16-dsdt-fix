@@ -13,11 +13,10 @@ index 8942b0a..3dd72b3 100644
 #       比固件表的「更大」时才替换，否则被忽略（覆盖不生效）。
 # 原理：内核按 签名+OEMID+OEM Table ID 匹配，且要求
 #       oem_revision 严格大于固件表（固件=0x2，改 0x3 才满足）。
-# 出处：Linux 内核文档 initrd_table_override
-#       (https://www.kernel.org/doc/html/latest/admin-guide/acpi/initrd_table_override.html)；
-#       Arch Wiki「DSDT」(https://wiki.archlinux.org/title/DSDT)；
-#       j0hnwang F27 补丁「Change 1 (N)」
-#       (https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)。
+# 出处：[内核文档 initrd_table_override](https://www.kernel.org/doc/html/latest/admin-guide/acpi/initrd_table_override.html)；
+#       [Arch Wiki「DSDT」](https://wiki.archlinux.org/title/DSDT)；
+#       j0hnwang F27 补丁「Change 1 (N)」→
+#       [github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)
 
 @@ -18,7 +18,7 @@
   *     Compiler ID      "HP  "
@@ -36,10 +35,8 @@ index 8942b0a..3dd72b3 100644
 #       → AE_AML_OPERAND_TYPE → 约一半概率 Oops/死循环，开机卡死。
 # 原理：删掉冲突的 Device 后，IC04 永远只解析成整数字段，
 #       SOD3 与 I2CH(IC04) 都恢复。是「消除根因」而非「绕过症状」。
-# 出处：LauriSarap/omen-transcend-16-linux-fix（F.25 的 Fix 1）
-#       (https://github.com/LauriSarap/omen-transcend-16-linux-fix)；
-#       j0hnwang/OMEN-Transcend-16-ACPI-fix「Change 2 (L)」
-#       (https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)。
+# 出处：[LauriSarap/omen-transcend-16-linux-fix](https://github.com/LauriSarap/omen-transcend-16-linux-fix)（F.25 的 Fix 1）；
+#       [j0hnwang/OMEN-Transcend-16-ACPI-fix](https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix)「Change 2 (L)」
 
 @@ -36967,18 +36967,6 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000002)
          }
@@ -65,10 +62,8 @@ index 8942b0a..3dd72b3 100644
 #       "cirrus,cirrus,boost-peak-milliamp"（vendor 前缀重复一次），
 #       Linux 的 Cirrus 驱动不识别这个错误字符串。
 # 原理：改成正确的 "cirrus,boost-peak-milliamp"，驱动才能解析喇叭参数。
-# 出处：LauriSarap 的 Fix 2
-#       (https://github.com/LauriSarap/omen-transcend-16-linux-fix)；
-#       no-hands-hand F27-Patch-Procedure.md「Change 6 (L)」
-#       (https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27)。
+# 出处：[LauriSarap 的 Fix 2](https://github.com/LauriSarap/omen-transcend-16-linux-fix)；
+#       [no-hands-hand F27-Patch-Procedure.md「Change 6 (L)」](https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27)
 
 @@ -107929,7 +107917,7 @@ DefinitionBlock ("", "DSDT", 2, "HPQOEM", "8C4D    ", 0x00000002)
  
