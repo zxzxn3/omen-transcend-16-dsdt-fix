@@ -161,8 +161,7 @@ if [ -n "$BOARD_NAME$PRODUCT_NAME" ] \
     esac
   else
     # 非交互无法征询用户 → 走保守安全路径：默认当作「否」中止；提示可加 -f/--force 忽略。
-    echo "  Aborted: board check failed and this is a non-interactive run (safety default = No)." >&2
-    echo "           Re-run with -f/--force to ignore this check." >&2
+    echo "  Aborted: board check failed in non-interactive run (use -f/--force to ignore" >&2
     exit 1
   fi
 fi
@@ -332,5 +331,5 @@ fi
 echo ""
 echo "Done. You can reboot now (do NOT use acpi=off / noapic)."
 echo "After reboot, verify with:"
-echo "  dmesg | grep -i override             # expect: DSDT override applied + kernel tainted"
+echo '  dmesg | grep -i "override|tainted"             # expect: DSDT override applied / kernel tainted'
 echo "  dmesg | grep -i AE_AML_OPERAND_TYPE  # expect: no output"
