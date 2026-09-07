@@ -5,6 +5,7 @@
 # 用法:   sudo bash install.sh [选项] [dsdt.aml 的路径或 URL]
 #        -f, --force    忽略「板号不符」警告（默认：交互询问[默认否]；非交互安全中止）
 #        --rebuild      即使 .aml 未变化也强制重建 initramfs（恢复上次可能没建成的状态）
+#        -y, --yes      所有提示都答「是」（在终端里也能全自动跑）
 #        -h, --help     显示英文帮助
 #        --            其后的参数一律视为 .aml 路径
 # 退出码: 0 成功 / 1 运行错误（板号中止/下载失败/校验失败/重建失败）/ 2 用法错误
@@ -96,6 +97,7 @@ trap 'exit 143' TERM
 #   - 操作数至多一个 = dsdt.aml 路径或 URL
 FORCE=0
 REBUILD=0
+YES=0
 SRC=""
 
 show_usage() {
@@ -106,6 +108,7 @@ Options:
   -f, --force   Bypass the board-mismatch safety check and force install.
       --rebuild  Force an initramfs rebuild even if the override is unchanged
                 (use to recover when a previous run may not have finished).
+  -y, --yes     Assume "yes" to every prompt (unattended runs in a terminal).
   -h, --help    Show this help and exit.
   --            Treat all remaining arguments as the .aml operand.
 
@@ -134,6 +137,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -f|--force) FORCE=1; shift ;;
     --rebuild)  REBUILD=1; shift ;;
+    -y|--yes)   YES=1; shift ;;
     -h|--help)  show_usage; exit 0 ;;
     --)         shift; break ;;      # 其后全部视为操作数
     -*)         usage_err "unknown option: $1" ;;
@@ -183,11 +187,13 @@ if [ -n "$BOARD_NAME$PRODUCT_NAME" ] \
   if [ "$FORCE" -eq 1 ]; then
     echo "  [OK] Ignoring board check (-f/--force)." >&2
   elif [ "$INTERACTIVE" -eq 1 ]; then
-    read -r -p "  Continue anyway? [y/N] " REPLY
-    case "$REPLY" in
-      y|Y|yes|Yes) ;;
-      *) echo "  Aborted." >&2; exit 1 ;;
-    esac
+    if [ "$YES" -ne 1 ]; then   # -y：视为已答「是」，跳过询问
+      read -r -p "  Continue anyway? [y/N] " REPLY
+      case "$REPLY" in
+        y|Y|yes|Yes) ;;
+        *) echo "  Aborted." >&2; exit 1 ;;
+      esac
+    fi
   else
     # 非交互无法征询用户 → 走保守安全路径：默认当作「否」中止；提示可加 -f/--force 忽略。
     echo "  Aborted: board check failed in non-interactive run." >&2
@@ -327,11 +333,13 @@ if [ "$INTERACTIVE" -eq 1 ]; then
   [ "$NEED_AML" -eq 1 ] && echo "    - install dsdt.aml -> $OVERRIDE_DIR/dsdt.aml" >&2
   [ "$NEED_CONF" -eq 1 ] && echo "    - add ${HOOK_NAME} hook to $CONF_TARGET" >&2
   [ "$REBUILD" -eq 1 ]   && echo "    - force rebuild initramfs" >&2
-  read -r -p "  Apply these changes and rebuild now? [y/N] " REPLY
-  case "$REPLY" in
-    y|Y|yes|Yes) ;;
-    *) echo "  Aborted (nothing was changed)." >&2; exit 1 ;;
-  esac
+  if [ "$YES" -ne 1 ]; then   # -y：跳过 apply 前确认
+    read -r -p "  Apply these changes and rebuild now? [y/N] " REPLY
+    case "$REPLY" in
+      y|Y|yes|Yes) ;;
+      *) echo "  Aborted (nothing was changed)." >&2; exit 1 ;;
+    esac
+  fi
 fi
 
 # ---- 8. apply（唯一可变窗口）：原子替换 ----
