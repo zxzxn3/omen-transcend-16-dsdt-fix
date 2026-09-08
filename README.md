@@ -38,14 +38,21 @@ curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/m
 sudo bash dsdt-fix.sh
 ```
 
-Other common invocations:
+All options, one per line — `--list` and `-h` need no root:
 
 ```bash
-sudo bash dsdt-fix.sh --list               # show what patches exist (no root needed)
-sudo bash dsdt-fix.sh --target 8C4D/F.29   # pick a board/BIOS explicitly
-sudo bash dsdt-fix.sh --force              # skip y/n in non-interative
-sudo bash dsdt-fix.sh /path/to/dsdt.aml    # your own .aml, installed as-is
+sudo bash dsdt-fix.sh --list               # list available patches (installable + upstream links); nothing is downloaded
+sudo bash dsdt-fix.sh --target 8C4D/F.29   # install one specific <board>/<bios>; omit it to auto-detect from DMI
+sudo bash dsdt-fix.sh --force              # skip the machine-match warning and the y/N confirmation
+sudo bash dsdt-fix.sh --rebuild            # force an initramfs rebuild even if nothing changed
+sudo bash dsdt-fix.sh /path/to/dsdt.aml    # your own .aml, installed as-is (only a 'DSDT' signature check)
+sudo bash dsdt-fix.sh -h                   # print all options
 ```
+
+Passing a `.aml` operand uses your file as-is; it cannot be combined with
+`--target`. An explicit `--target` that does not match this machine's DMI asks
+for confirmation before applying (`-f` skips it). With no operand, the patch is
+pulled from this repo as `dsdt-fix/<target>/dsdt.aml`.
 
 ## How it works
 
@@ -63,82 +70,33 @@ On **CachyOS** the rebuild prefers `limine-mkinitcpio` (rebuild **and** refresh
 the auto-managed Limine entries); on plain Arch it falls back to
 `mkinitcpio -P`.
 
-### Safety design
+## Safety design
 
-- **Two-phase.** The prepare phase never touches a real file — everything is
-  staged in a `mktemp -d` directory. Real files are only replaced at the last
-  moment (atomic `.new` + `mv`), right before the rebuild.
-- **Automatic rollback.** If anything fails before the rebuild is confirmed, an
-  `EXIT` trap restores the previous `dsdt.aml` and the mkinitcpio config from
-  staged originals. A single-instance `flock` prevents concurrent runs.
-- **It verifies, not just hopes.** After the rebuild, `dsdt-fix.sh` resolves the
-  images from `/etc/mkinitcpio.d/*.preset` (the same source the boot-entry
-  tooling uses) and checks each with `lsinitcpio --early` for
-  `kernel/firmware/acpi/dsdt.aml`. If any of the freshly built images lacks it,
-  the script errors and rolls back; if none can be found it tells you to check
-  manually. This is the single safety net for unusual config layouts.
+A DSDT override runs as **kernel code on every boot**, so the installer is
+deliberately conservative:
+
+- **Two-phase + auto-rollback.** Nothing real is written until the last moment
+  (everything is staged in a `mktemp -d`, then applied with atomic `.new` +
+  `mv`). If anything fails before the rebuild is confirmed, an `EXIT` trap
+  restores the previous files; a single-instance `flock` prevents concurrent
+  runs.
+- **Verifies, not hopes.** After the rebuild it checks every image named by
+  `/etc/mkinitcpio.d/*.preset` with `lsinitcpio --early` for
+  `kernel/firmware/acpi/dsdt.aml`; if any freshly built image lacks it, it
+  errors and rolls back (and if none can be found, it tells you to check
+  manually).
 - **Conservative about configs.** Only `/etc/mkinitcpio.conf` is ever
-  auto-edited (it must have a `HOOKS=(... base ...)` line to anchor on); if the
-  hook cannot be added automatically it errors and tells you what to add by
-  hand.
-- **No litter.** Temporary files are removed on exit. The only persistent file
+  auto-edited (it must have a `HOOKS=(... base ...)` line to anchor on);
+  otherwise it tells you exactly what to add by hand.
+- **No litter.** Temporary files are removed on exit; the only persistent file
   is a `dsdt.aml.bak-<timestamp>` kept before each overwrite.
 
-### Options
-
-| Option | Meaning |
-|---|---|
-| `-l, --list` | Print the available patches (installable `--target`s + upstream links) and exit — no root, nothing downloaded. |
-| `--target ID` | `<board>/<bios>` exactly as in the repo tree (e.g. `8C4D/F.29`). Omit to auto-detect from DMI. |
-| `-f, --force` | Skip the machine-match soft warning and the interactive confirmation. |
-| `--rebuild` | Force a rebuild even if the override is already installed and unchanged. |
-| `-h, --help` | Show help and exit. |
-
-### What the operand means
-
-- **Given** — a `dsdt.aml` path, installed as-is with **no** checks (e.g. a
-  patch you compiled yourself; the only check is the `DSDT` file signature).
-  `--target` cannot be combined with an operand.
-- **Omitted** — the patch is pulled from this GitHub repo as
-  `dsdt-fix/<target>/dsdt.aml`, using `--target` or the machine DMI.
-
-An explicit `--target` that does not match the machine's DMI triggers a soft
-warning (interactive `y/N`, or abort in non-interactive mode unless `-f`).
-
-## Verify after installing
-
-The installer already checks (pre-reboot) that the override made it into the
-built initramfs:
-
-```bash
-lsinitcpio --early /boot/<your-initramfs> | grep kernel/firmware/acpi/dsdt.aml
-```
-
-Then, to actually use it:
-
-1. Remove `acpi=off` from the kernel command line (CachyOS/Limine:
-   `/etc/default/limine`, then `sudo limine-mkinitcpio`). You may **keep
-   `noapic`** for this first boot as a safety margin — `noapic` does not
-   disable ACPI, so the override still applies. (Do **not** verify under
-   `acpi=off`: it disables ACPI entirely, so the override never runs.)
-2. Reboot and confirm it is active:
-   ```bash
-   dmesg | grep -i "ACPI: Override"      # expect: DSDT ... this is unsafe: tainting kernel
-   dmesg | grep -i AE_AML_OPERAND_TYPE   # expect: no output
-   ```
-3. Built-in speakers should now work. Only once everything passes, also remove
-   `noapic`.
-
-## Rollback (if boot fails)
-
-Re-add `acpi=off noapic`, then either:
-
-- restore the pre-change copy:
-  `/etc/initcpio/acpi_override/dsdt.aml.bak-<timestamp>` → `dsdt.aml`, remove
-  `acpi_override` from `HOOKS`, `sudo mkinitcpio -P`; or
-- boot a live USB → `chroot` → remove
-  `/etc/initcpio/acpi_override/dsdt.aml`, drop `acpi_override` from `HOOKS`,
-  `mkinitcpio -P`, reboot.
+**If boot fails**, re-add `acpi=off noapic` and roll back — restore the
+pre-change copy (`/etc/initcpio/acpi_override/dsdt.aml.bak-<timestamp>` →
+`dsdt.aml`, remove `acpi_override` from `HOOKS`, `sudo mkinitcpio -P`); or if
+you cannot boot at all, from a live USB → `chroot` → delete
+`/etc/initcpio/acpi_override/dsdt.aml`, drop `acpi_override` from `HOOKS`,
+`mkinitcpio -P`, reboot.
 
 ## Share your own fix
 
@@ -150,29 +108,13 @@ of repeating the whole journey.
 
 A patch folder should look like:
 
-- layout: `dsdt-fix/<board>/<bios>/dsdt.aml` (+ `.dsl` sources and a
+- layout: `dsdt-fix/<board>/<bios>/dsdt.dsl` (+ an optional
   `patch.diff` annotating each change and its source);
 - a short `README.md` in the patch folder describing anything patch-specific
   (prerequisites, differences vs other BIOSes, credits) — `dsdt-fix.sh` prints
   it before installing;
 - add one row to [`dsdt-fix/index.md`](dsdt-fix/index.md) so the installer can
   list it;
-- the `.aml` must be **byte-reproducible** from the committed `.dsl`
-  (recompile with `iasl` and compare) so a patch is never a hidden binary blob.
-
-`dsdt-fix.sh` also prints this invitation up front, before anything runs.
-
-## Repository layout
-
-```
-dsdt-fix.sh                # the auto-detecting installer (single file)
-dsdt-fix/index.md          # installable --targets + upstream patch links
-dsdt-fix/<board>/<bios>/   # one patch per board × BIOS
-  dsdt.aml                 # compiled override table (what gets installed)
-  README.md                # patch-specific note + credits (shown by installer)
-  dsdt.dsl / dsdt-original.dsl / dsdt-original.dat
-  patch.diff               # per-change rationale + sources
-```
 
 ## Important notes
 
@@ -185,11 +127,6 @@ dsdt-fix/<board>/<bios>/   # one patch per board × BIOS
   reviewed patches published in this repo.
 - **Per-Linux-install.** It applies only to the Linux where you run it; other
   systems (including live USBs) need the same steps.
-- **Strict board × BIOS match.** One patch = one `--target`. After a BIOS
-  upgrade with no matching patch, the installer lists what is available and
-  lets you pick explicitly — it never silently falls back.
-- The **touchpad is intentionally not modified** (it works with the stock
-  firmware; community touchpad changes were tried and reverted).
 
 ## References & credits
 
@@ -209,16 +146,14 @@ redistribute their patches, it only publishes ones it can vouch for (currently
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE). The published patch adapts GPL-3.0 community
-work, so this repository (installer, patches and docs) is released under the
-GNU General Public License version 3.
+GPL-3.0
 
 ## Disclaimer
 
 This is **not** an official HP tool and is not affiliated with HP. A DSDT
 override runs as **kernel code on every boot**; nothing here writes firmware or
 touches Windows, but a faulty `.aml` can keep Linux from booting (see
-[Rollback](#rollback-if-boot-fails)). Use this project **at your own risk**, on
+[Safety design](#safety-design)). Use this project **at your own risk**, on
 hardware you own, only with `.aml` files you trust, and never on a machine you
 cannot afford to reinstall. The project is provided "as is" with **no warranty
 of any kind**; if you are not comfortable changing how your hardware's ACPI
