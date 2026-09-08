@@ -160,8 +160,13 @@ Re-add `acpi=off noapic`, then either:
 
 ## Share your own fix
 
-Made your own DSDT fix for this laptop (or a sibling board)? Open a pull
-request or issue at <https://github.com/zxzxn3/omen-transcend-16-dsdt-fix>:
+**Contributions are welcome.** If you fixed the same problem on a different
+BIOS or a sibling board — or improved this patch — send a pull request (or open
+an issue with your `.aml`/`.dsl`). The owner reviews every submission and
+merges it into this repo, so the next person can just run `dsdt-fix.sh` instead
+of repeating the whole journey.
+
+A patch folder should look like:
 
 - layout: `dsdt-fix/<board>/<bios>/dsdt.aml` (+ `.dsl` sources and a
   `patch.diff` annotating each change and its source);
