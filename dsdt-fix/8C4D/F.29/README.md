@@ -10,3 +10,8 @@ Three changes in this patch:
 3. Fix the Cirrus audio string so the built-in speakers work.
 
 Per-change rationale and sources are annotated in `patch.diff`.
+
+Sources (all GPL-3.0, adapted for F.29):
+- j0hnwang/OMEN-Transcend-16-ACPI-fix — https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix
+- no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27 — https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27
+- LauriSarap/omen-transcend-16-linux-fix — https://github.com/LauriSarap/omen-transcend-16-linux-fix
