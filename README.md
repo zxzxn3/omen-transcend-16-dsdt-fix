@@ -229,7 +229,17 @@ Currently: [`dsdt-fix/8C4D/F.29/`](dsdt-fix/8C4D/F.29/).
   Cirrus audio string.
 
 This repo's F.29 patch adapts those community patches, item by item, to the
-16-U1024TX / F.29 firmware.
+16-U1024TX / F.29 firmware. All three upstream repos are **GPL-3.0** and stay
+the canonical source for their own units/BIOS versions — this repo does not
+redistribute their patches, it only publishes ones it can vouch for (currently
+`8C4D/F.29`) and points visitors at the upstream repos for anything else (see
+[`dsdt-fix/index.md`](dsdt-fix/index.md)).
+
+## License
+
+GPL-3.0 — see [LICENSE](LICENSE). The published patch adapts GPL-3.0 community
+work, so this repository (installer, patches and docs) is released under the
+GNU General Public License version 3.
 
 ## About this project
 
