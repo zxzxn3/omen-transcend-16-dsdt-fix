@@ -77,6 +77,15 @@ patch:
 curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/dsdt-fix.sh | sudo bash
 ```
 
+Before running any downloaded script as root, download it and take a look
+first:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/dsdt-fix.sh -o dsdt-fix.sh
+# read it (it is short), then:
+sudo bash dsdt-fix.sh
+```
+
 **Common usage:**
 
 ```bash
@@ -170,8 +179,13 @@ A patch folder should look like:
 
 - layout: `dsdt-fix/<board>/<bios>/dsdt.aml` (+ `.dsl` sources and a
   `patch.diff` annotating each change and its source);
+- a short `README.md` in the patch folder describing anything patch-specific
+  (prerequisites, differences vs other BIOSes, credits) — `dsdt-fix.sh` prints
+  it before installing;
 - add one row to [`dsdt-fix/index.md`](dsdt-fix/index.md) so the installer can
-  list it.
+  list it;
+- the `.aml` must be **byte-reproducible** from the committed `.dsl`
+  (recompile with `iasl` and compare) so a patch is never a hidden binary blob.
 
 `dsdt-fix.sh` also prints this invitation at the end of a successful run.
 
@@ -182,6 +196,7 @@ dsdt-fix.sh                # the auto-detecting installer (single file)
 dsdt-fix/index.md          # published patches: one --target per row
 dsdt-fix/<board>/<bios>/   # one patch per board × BIOS
   dsdt.aml                 # compiled override table (what gets installed)
+  README.md                # patch-specific note + credits (shown by installer)
   dsdt.dsl / dsdt-original.dsl / dsdt-original.dat
   patch.diff               # per-change rationale + sources
 ```
@@ -192,6 +207,11 @@ Currently: [`dsdt-fix/8C4D/F.29/`](dsdt-fix/8C4D/F.29/).
 
 - **Runtime-only override.** No firmware is written; nothing can brick the
   machine; **Windows is unaffected**.
+- **Trust the .aml you install.** A DSDT runs as **kernel code on the next
+  boot** (ACPI AML is executed by the kernel; the `DSDT` signature check only
+  catches accidental file mix-ups, it is not a security check). Only install
+  `.aml` files you trust — e.g. one you built from reviewed source, or the
+  reviewed patches published in this repo.
 - **Per-Linux-install.** It applies only to the Linux where you run it; other
   systems (including live USBs) need the same steps.
 - **Strict board × BIOS match.** One patch = one `--target`. After a BIOS

@@ -120,6 +120,13 @@ if [ -d /run/lock ] && command -v flock >/dev/null 2>&1; then
   flock -n 9 || { echo "Error: another dsdt-override install is already running." >&2; exit 1; }
 fi
 
+# A .aml is executed as kernel code at the next boot, so warn up front
+# (before anything is downloaded or changed).
+echo ""
+echo "Security: a dsdt.aml runs as kernel code at the next boot. Only install"
+echo "  .aml files you trust (review source/patch before installing)."
+echo ""
+
 # ---- pick the .aml: user operand, or official repo by --target / DMI ----
 if [ -n "$SRC" ]; then
   echo "Using user-provided dsdt.aml: $SRC."
@@ -181,6 +188,14 @@ else
     else
       echo "  [OK] Ignoring machine-match warning (-f/--force)." >&2
     fi
+  fi
+  # print the patch-specific note (README.md in that patch folder), if any
+  PATCH_NOTE="$(curl -fsSL "${RAW_BASE}/dsdt-fix/${TARGET}/README.md" 2>/dev/null || true)"
+  if [ -n "$PATCH_NOTE" ]; then
+    echo ""
+    echo "--- Patch note for $TARGET ---"
+    printf '%s\n' "$PATCH_NOTE"
+    echo "-------------------------------"
   fi
   SRC="$URL"
 fi
