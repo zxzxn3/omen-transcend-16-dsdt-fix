@@ -19,7 +19,7 @@ Fixes the broken ACPI on the **HP OMEN Transcend 16** so Linux no longer:
 
 - Hangs / panics at boot — `AE_AML_OPERAND_TYPE`, oops in
   `acpi_ns_build_normalized_path` (the reason people previously booted with
-  `acpi=off noapic`).
+  `acpi=off noapic`; `noapic` alone is usually enough).
 - Comes up with silent built-in speakers.
 - And other problems depend on which patch you choose.
 
@@ -29,6 +29,7 @@ Check [dsdt-fix/index.md](dsdt-fix/index.md) to see available patches.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/dsdt-fix.sh | sudo bash
+# non-interactive
 ```
 or read it before you `sudo`
 
@@ -36,6 +37,7 @@ or read it before you `sudo`
 curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/dsdt-fix.sh -o dsdt-fix.sh
 # read it, then:
 sudo bash dsdt-fix.sh
+# interactive
 ```
 
 All options, one per line — `--list` and `-h` need no root:
@@ -80,16 +82,17 @@ deliberately conservative:
   `mv`). If anything fails before the rebuild is confirmed, an `EXIT` trap
   restores the previous files; a single-instance `flock` prevents concurrent
   runs.
-- **Verifies, not hopes.** After the rebuild it checks every image named by
-  `/etc/mkinitcpio.d/*.preset` with `lsinitcpio --early` for
-  `kernel/firmware/acpi/dsdt.aml`; if any freshly built image lacks it, it
-  errors and rolls back (and if none can be found, it tells you to check
-  manually).
 - **Conservative about configs.** Only `/etc/mkinitcpio.conf` is ever
   auto-edited (it must have a `HOOKS=(... base ...)` line to anchor on);
   otherwise it tells you exactly what to add by hand.
 - **No litter.** Temporary files are removed on exit; the only persistent file
   is a `dsdt.aml.bak-<timestamp>` kept before each overwrite.
+  
+**Confirmed at first boot.** There is no post-build image inspection — the
+script trusts `limine-mkinitcpio`/`mkinitcpio` to have packed the override.
+After the first boot, confirm it is live: `dmesg | grep -i "ACPI: Override"`
+should show the "DSDT ... tainting kernel" message (the installer prints this
+exact check before you reboot).
 
 **If boot fails**, re-add `acpi=off noapic` and roll back — restore the
 pre-change copy (`/etc/initcpio/acpi_override/dsdt.aml.bak-<timestamp>` →
