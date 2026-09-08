@@ -24,9 +24,10 @@ board `8C4D`, BIOS `F.29`) so Linux no longer:
 - Comes up with silent built-in speakers.
 
 > **Status.** One patch is published: **`8C4D/F.29`** (board `8C4D`, BIOS `F.29`). The
-> published patch list lives in [`dsdt-fix/index.md`](dsdt-fix/index.md)
-> (one `--target` per row, e.g. `8C4D/F.29`). Patches are matched exactly by
-> board × BIOS — **never** an automatic fallback to a different BIOS.
+> published patch list lives in [`dsdt-fix/index.md`](dsdt-fix/index.md):
+> installable `--target`s (e.g. `8C4D/F.29`) plus links to upstream patches for
+> sibling units / other BIOS versions. Patches are matched exactly by board ×
+> BIOS — **never** an automatic fallback to a different BIOS.
 
 ## How it works
 
@@ -229,8 +230,9 @@ Currently: [`dsdt-fix/8C4D/F.29/`](dsdt-fix/8C4D/F.29/).
   Cirrus audio string.
 
 This repo's F.29 patch adapts those community patches, item by item, to the
-16-U1024TX / F.29 firmware. All three upstream repos are **GPL-3.0** and stay
-the canonical source for their own units/BIOS versions — this repo does not
+16-U1024TX / F.29 firmware. [j0hnwang/OMEN-Transcend-16-ACPI-fix] and
+[no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27] are **GPL-3.0** and stay the
+canonical source for their own units/BIOS versions — this repo does not
 redistribute their patches, it only publishes ones it can vouch for (currently
 `8C4D/F.29`) and points visitors at the upstream repos for anything else (see
 [`dsdt-fix/index.md`](dsdt-fix/index.md)).

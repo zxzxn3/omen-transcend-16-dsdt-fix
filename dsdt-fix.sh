@@ -157,18 +157,39 @@ else
 
   URL="${RAW_BASE}/dsdt-fix/${TARGET}/dsdt.aml"
   if [ "$(curl -s -o /dev/null -w '%{http_code}' "$URL" || true)" != "200" ]; then
-    # no such patch -> list what is published and exit (never auto-fallback)
+    # no such patch -> list what is available and exit (never auto-fallback).
+    # index.md has two tables, parsed by section:
+    #   "## Installable with dsdt-fix.sh" -> one <board>/<bios> per row (installable here)
+    #   "## Upstream patches ..."         -> <board>/<bios> | <url> (fetch it yourself)
     echo "  [WARN] No patch for target '$TARGET' in this repo." >&2
-    echo "  Available patches (--target values):"
+    LIST=""
     IDX_DATA="$(curl -fsSL "${RAW_BASE}/dsdt-fix/index.md" 2>/dev/null || true)"
     if [ -n "$IDX_DATA" ]; then
-      # rows are single cells of the form <board>/<bios>
-      printf '%s\n' "$IDX_DATA" | awk -F'|' '
-        { c=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", c) }
-        c ~ /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/ { print "    " c }
-      ' || true
+      LIST="$(printf '%s\n' "$IDX_DATA" | awk -F'|' '
+        /^##[[:space:]]/ { s=$0; sub(/^##[[:space:]]+/, "", s)
+                           mode = (s ~ /^Installable/) ? "I" : (s ~ /^Upstream/) ? "U" : ""
+                           next }
+        mode == "" || $0 !~ /^\|/ { next }
+        { a=$2; b=$3
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", a)
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", b)
+          if (a == "" || a == "--target" || a ~ /^-+$/) next
+          if (mode == "I" && a ~ /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/) print "I\t" a
+          else if (mode == "U" && b != "") print "U\t" a "\t" b
+        }
+      ' || true)"
     else
-      echo "    (could not read the patch list)"
+      echo "    (could not read the patch list)" >&2
+    fi
+    OWN="$(printf '%s\n' "$LIST" | awk -F'\t' '$1=="I"{print $2}') " || true
+    UP="$(printf '%s\n' "$LIST" | awk -F'\t' '$1=="U"{print $2"\t"$3}') " || true
+    if [ -n "$OWN" ]; then
+      echo "  Installable with dsdt-fix.sh:"
+      printf '%s\n' "$OWN" | sed 's/^/    /'
+    fi
+    if [ -n "$UP" ]; then
+      echo "  Upstream patches (download & install manually — dsdt-fix.sh won't fetch them):"
+      printf '%s\n' "$UP" | awk -F'\t' '{ printf "    %-16s %s\n", $1, $2 }'
     fi
     echo "  Re-run with --target matching an available patch, or pass a local .aml." >&2
     exit 1
