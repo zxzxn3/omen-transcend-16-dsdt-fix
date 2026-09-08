@@ -23,7 +23,7 @@ board `8C4D`, BIOS `F.29`) so Linux no longer:
   `acpi=off noapic`).
 - Comes up with silent built-in speakers.
 
-> **Status.** One patch is published: **board `8C4D` / BIOS `F.29`**. The
+> **Status.** One patch is published: **`8C4D/F.29`** (board `8C4D`, BIOS `F.29`). The
 > published patch list lives in [`dsdt-fix/index.md`](dsdt-fix/index.md)
 > (one `--target` per row, e.g. `8C4D/F.29`). Patches are matched exactly by
 > board × BIOS — **never** an automatic fallback to a different BIOS.
@@ -187,7 +187,7 @@ A patch folder should look like:
 - the `.aml` must be **byte-reproducible** from the committed `.dsl`
   (recompile with `iasl` and compare) so a patch is never a hidden binary blob.
 
-`dsdt-fix.sh` also prints this invitation at the end of a successful run.
+`dsdt-fix.sh` also prints this invitation up front, before anything runs.
 
 ## Repository layout
 
