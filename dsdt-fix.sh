@@ -62,6 +62,7 @@ trap 'exit 143' TERM
 # ---- args ----
 FORCE=0
 REBUILD=0
+LIST=0      # -l/--list: just print the available patches and exit
 TARGET=""   # <board>/<bios> (official download); empty = auto-detect from DMI
 SRC=""      # optional operand: a local dsdt.aml
 
@@ -75,6 +76,8 @@ Options:
       --rebuild     Force an initramfs rebuild even if the override is unchanged.
       --target ID   board/BIOS for the official download, e.g. 8C4D/F.29.
                     (omit: auto-detect from the machine DMI)
+  -l, --list       Print the available patches (installable + upstream links)
+                   and exit. No root, nothing is downloaded or changed.
   -h, --help       Show this help and exit.
 
 Operand (optional): a local dsdt.aml (e.g. one you compiled yourself), used
@@ -93,6 +96,40 @@ EOF
 
 usage_err() { echo "Error: $*" >&2; echo >&2; show_usage >&2; exit 2; }
 
+# print the available-patches lists from dsdt-fix/index.md (no install).
+# index.md has two tables, parsed by section:
+#   "## Installable with dsdt-fix.sh" -> one <board>/<bios> per row (installable here)
+#   "## Upstream patches ..."         -> <board>/<bios> | <url> (fetch it yourself)
+list_patches() {
+  local idx list own up
+  idx="$(curl -fsSL "${RAW_BASE}/dsdt-fix/index.md" 2>/dev/null || true)"
+  [ -n "$idx" ] || { echo "    (could not read the patch list)" >&2; return 0; }
+  list="$(printf '%s\n' "$idx" | awk -F'|' '
+    /^##[[:space:]]/ { s=$0; sub(/^##[[:space:]]+/, "", s)
+                       mode = (s ~ /^Installable/) ? "I" : (s ~ /^Upstream/) ? "U" : ""
+                       next }
+    mode == "" || $0 !~ /^\|/ { next }
+    { a=$2; b=$3
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", a)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", b)
+      if (a == "" || a == "--target" || a ~ /^-+$/) next
+      if (mode == "I" && a ~ /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/) print "I\t" a
+      else if (mode == "U" && b != "") print "U\t" a "\t" b
+    }
+  ' || true)"
+  [ -n "$list" ] || { echo "    (could not read the patch list)" >&2; return 0; }
+  own="$(printf '%s\n' "$list" | awk -F'\t' '$1=="I"{print $2}') " || true
+  up="$(printf '%s\n' "$list" | awk -F'\t' '$1=="U"{print $2"\t"$3}') " || true
+  if [ -n "$own" ]; then
+    echo "  Installable with dsdt-fix.sh:"
+    printf '%s\n' "$own" | sed 's/^/    /'
+  fi
+  if [ -n "$up" ]; then
+    echo "  Upstream patches (download & install manually — dsdt-fix.sh won't fetch them):"
+    printf '%s\n' "$up" | awk -F'\t' '{ printf "    %-16s %s\n", $1, $2 }'
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -f|--force)   FORCE=1; shift ;;
@@ -100,12 +137,20 @@ while [ "$#" -gt 0 ]; do
     --target)     [ "$#" -ge 2 ] || usage_err "--target needs a value, e.g. --target 8C4D/F.29"
                   TARGET="$2"; shift 2 ;;
     --target=*)   TARGET="${1#*=}"; shift ;;
+    -l|--list)    LIST=1; shift ;;
     -h|--help)    show_usage; exit 0 ;;
     -*)           usage_err "unknown option: $1" ;;
     *)            [ -n "$SRC" ] && usage_err "too many arguments: only one operand allowed"
                   SRC="$1"; shift ;;
   esac
 done
+
+# -l/--list: just print the available patches and exit (no root, no download)
+if [ "$LIST" -eq 1 ]; then
+  command -v curl >/dev/null 2>&1 || { echo "Error: listing patches requires 'curl'." >&2; exit 1; }
+  list_patches
+  exit 0
+fi
 
 # --target must be <board>/<bios>, and only makes sense for the official download
 if [ -n "$TARGET" ] && ! printf '%s' "$TARGET" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
@@ -157,40 +202,9 @@ else
 
   URL="${RAW_BASE}/dsdt-fix/${TARGET}/dsdt.aml"
   if [ "$(curl -s -o /dev/null -w '%{http_code}' "$URL" || true)" != "200" ]; then
-    # no such patch -> list what is available and exit (never auto-fallback).
-    # index.md has two tables, parsed by section:
-    #   "## Installable with dsdt-fix.sh" -> one <board>/<bios> per row (installable here)
-    #   "## Upstream patches ..."         -> <board>/<bios> | <url> (fetch it yourself)
+    # no such patch -> list what is available and exit (never auto-fallback)
     echo "  [WARN] No patch for target '$TARGET' in this repo." >&2
-    LIST=""
-    IDX_DATA="$(curl -fsSL "${RAW_BASE}/dsdt-fix/index.md" 2>/dev/null || true)"
-    if [ -n "$IDX_DATA" ]; then
-      LIST="$(printf '%s\n' "$IDX_DATA" | awk -F'|' '
-        /^##[[:space:]]/ { s=$0; sub(/^##[[:space:]]+/, "", s)
-                           mode = (s ~ /^Installable/) ? "I" : (s ~ /^Upstream/) ? "U" : ""
-                           next }
-        mode == "" || $0 !~ /^\|/ { next }
-        { a=$2; b=$3
-          gsub(/^[[:space:]]+|[[:space:]]+$/, "", a)
-          gsub(/^[[:space:]]+|[[:space:]]+$/, "", b)
-          if (a == "" || a == "--target" || a ~ /^-+$/) next
-          if (mode == "I" && a ~ /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/) print "I\t" a
-          else if (mode == "U" && b != "") print "U\t" a "\t" b
-        }
-      ' || true)"
-    else
-      echo "    (could not read the patch list)" >&2
-    fi
-    OWN="$(printf '%s\n' "$LIST" | awk -F'\t' '$1=="I"{print $2}') " || true
-    UP="$(printf '%s\n' "$LIST" | awk -F'\t' '$1=="U"{print $2"\t"$3}') " || true
-    if [ -n "$OWN" ]; then
-      echo "  Installable with dsdt-fix.sh:"
-      printf '%s\n' "$OWN" | sed 's/^/    /'
-    fi
-    if [ -n "$UP" ]; then
-      echo "  Upstream patches (download & install manually — dsdt-fix.sh won't fetch them):"
-      printf '%s\n' "$UP" | awk -F'\t' '{ printf "    %-16s %s\n", $1, $2 }'
-    fi
+    list_patches
     echo "  Re-run with --target matching an available patch, or pass a local .aml." >&2
     exit 1
   fi
