@@ -1,5 +1,15 @@
 # HP OMEN Transcend 16 — Linux ACPI (DSDT) fix
 
+> **A gibberish from the human owner.** Hi — I spent two days working with Agent to get
+> Linux running on this OMEN laptop (maybe it would have taken less time if I
+> hadn't used Agent). Once I'd fixed it with community wisdom, I decided to
+> automate the whole thing with an agent — which led to a lot of
+> over-engineering, then refactoring, and all that (I'm starting to think I
+> could write much faster if I only used the agent for the first ten minutes of
+> this project). It also burned through a ton of tokens, i.e. money. I'll
+> probably end up asking an AI to rephrase this paragraph too. For what it's
+> worth: I do review these code changes.
+
 > ⚠️ **AI-agent-led project.** This repository was primarily produced by an AI
 > coding agent (GitHub Copilot, powered by DeepSeek) under human guidance and
 > review. The diagnosis and the DSDT patch were cross-checked against the public
