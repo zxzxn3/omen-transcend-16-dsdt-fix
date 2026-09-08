@@ -120,21 +120,26 @@ if [ -d /run/lock ] && command -v flock >/dev/null 2>&1; then
   flock -n 9 || { echo "Error: another dsdt-override install is already running." >&2; exit 1; }
 fi
 
-# A .aml is executed as kernel code at the next boot, so warn up front
-# (before anything is downloaded or changed).
+# .aml executes as kernel code at next boot; say so up front, and include a
+# neutral link for anyone who would rather build/fix their own.
+echo "Caution: A dsdt.aml runs as kernel code at the next boot — only install"
+echo "  .aml files you trust. Made your own fix? Patches welcome via PR:"
+echo "  https://github.com/zxzxn3/omen-transcend-16-dsdt-fix"
 echo ""
-echo "Security: a dsdt.aml runs as kernel code at the next boot. Only install"
-echo "  .aml files you trust (review source/patch before installing)."
-echo ""
+
+# read the machine DMI once, up front, and show it when available
+SYS_DMI=/sys/class/dmi/id
+DETECTED_BOARD="$(cat "$SYS_DMI/board_name" 2>/dev/null | xargs 2>/dev/null || true)"
+DETECTED_BIOS="$(cat "$SYS_DMI/bios_version" 2>/dev/null | xargs 2>/dev/null || true)"
+if [ -n "$DETECTED_BOARD$DETECTED_BIOS" ]; then
+  echo "Machine: ${DETECTED_BOARD}/${DETECTED_BIOS}"
+fi
 
 # ---- pick the .aml: user operand, or official repo by --target / DMI ----
 if [ -n "$SRC" ]; then
   echo "Using user-provided dsdt.aml: $SRC."
 else
   command -v curl >/dev/null 2>&1 || { echo "Error: downloading patches requires 'curl'." >&2; exit 1; }
-  SYS_DMI=/sys/class/dmi/id
-  DETECTED_BOARD="$(cat "$SYS_DMI/board_name" 2>/dev/null | xargs 2>/dev/null || true)"
-  DETECTED_BIOS="$(cat "$SYS_DMI/bios_version" 2>/dev/null | xargs 2>/dev/null || true)"
   EXPLICIT=0
   if [ -n "$TARGET" ]; then
     EXPLICIT=1
@@ -147,7 +152,7 @@ else
   if [ "$EXPLICIT" -eq 1 ]; then
     echo "Patch target: $TARGET (explicit)"
   else
-    echo "Patch target: $TARGET (auto-detected from this machine)"
+    echo "Patch target: $TARGET (auto-detected)"
   fi
 
   URL="${RAW_BASE}/dsdt-fix/${TARGET}/dsdt.aml"
@@ -198,6 +203,18 @@ else
     echo "-------------------------------"
   fi
   SRC="$URL"
+fi
+
+# one interactive confirmation for the whole operation, before anything is
+# downloaded or written (after the patch note above, when there is one)
+if [ "$INTERACTIVE" -eq 1 ] && [ "$FORCE" -ne 1 ]; then
+  echo "  Plan: install the DSDT override, add the '${HOOK_NAME}' hook if missing," >&2
+  echo "        then rebuild the initramfs." >&2
+  read -r -p "  Continue? [y/N] " REPLY
+  case "$REPLY" in
+    y|Y|yes|Yes) ;;
+    *) echo "  Aborted (nothing was changed)." >&2; exit 1 ;;
+  esac
 fi
 
 # ---- stage + download ----
@@ -256,19 +273,6 @@ if [ "$HOOK_OK" -ne 1 ]; then
     echo "       (needs a 'HOOKS=(... base ...)' line to anchor on); add it manually, then re-run." >&2
     exit 1
   fi
-fi
-
-# interactive confirmation (last chance to bail; -f or non-interactive skips)
-if [ "$INTERACTIVE" -eq 1 ] && [ "$FORCE" -ne 1 ]; then
-  echo "  Plan:" >&2
-  [ "$NEED_AML" -eq 1 ]  && echo "    - install dsdt.aml -> $OVERRIDE_DIR/dsdt.aml" >&2
-  [ "$NEED_CONF" -eq 1 ] && echo "    - add ${HOOK_NAME} hook to $MKINITCPIO_CONF" >&2
-  [ "$REBUILD" -eq 1 ]   && echo "    - force rebuild initramfs" >&2
-  read -r -p "  Apply these changes and rebuild now? [y/N] " REPLY
-  case "$REPLY" in
-    y|Y|yes|Yes) ;;
-    *) echo "  Aborted (nothing was changed)." >&2; exit 1 ;;
-  esac
 fi
 
 # ---- apply (the only real-file mutation window) ----
@@ -351,18 +355,15 @@ BUILT=1   # rebuild confirmed + images verified (when possible); failures above 
 
 echo ""
 echo "Install complete. Reboot to apply. Before rebooting:"
-echo "  1. Remove 'acpi=off' from the kernel cmdline (CachyOS: /etc/default/limine, then"
-echo "     'sudo limine-mkinitcpio'). You may KEEP 'noapic' for this first boot as a"
+echo "  1. Remove 'acpi=off' from the kernel cmdline. You may KEEP 'noapic' for this first boot as a"
 echo "     safety margin (noapic does not disable ACPI, so the override still applies)."
 echo "  2. After boot, verify the override is active:"
 echo '       dmesg | grep -i "ACPI: Override"      # expect: DSDT ... this is unsafe: tainting kernel'
 echo '       dmesg | grep -i AE_AML_OPERAND_TYPE   # expect: no output'
 echo "  3. Only after those pass, also remove 'noapic'."
-echo "If booting without acpi=off fails: re-add acpi=off noapic, remove"
-echo "  ${OVERRIDE_DIR}/dsdt.aml, drop '${HOOK_NAME}' from HOOKS in $MKINITCPIO_CONF,"
-echo "  then 'sudo mkinitcpio -P'. A pre-change copy is kept as dsdt.aml.bak-<timestamp>."
+echo "  4. If booting without acpi=off fails: re-add acpi=off noapic, remove"
+echo "     ${OVERRIDE_DIR}/dsdt.aml, drop '${HOOK_NAME}' from HOOKS in $MKINITCPIO_CONF,"
+echo "     then 'sudo mkinitcpio -P'. A pre-change copy is kept as dsdt.aml.bak-<timestamp>."
 echo ""
-echo "Made your own DSDT fix (or for a sibling board)? Share it back via a PR/issue:"
-echo "  https://github.com/zxzxn3/omen-transcend-16-dsdt-fix"
-echo "  (layout: dsdt-fix/<board>/<bios>/dsdt.aml + a row in dsdt-fix/index.md)"
+
 
