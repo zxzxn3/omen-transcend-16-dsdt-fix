@@ -109,7 +109,7 @@ of repeating the whole journey.
 A patch folder should look like:
 
 - layout: `dsdt-fix/<board>/<bios>/dsdt.dsl` (+ an optional
-  `patch.diff` annotating each change and its source);
+  `dsdt.diff` annotating each change and its source);
 - a short `README.md` in the patch folder describing anything patch-specific
   (prerequisites, differences vs other BIOSes, credits) — `dsdt-fix.sh` prints
   it before installing;

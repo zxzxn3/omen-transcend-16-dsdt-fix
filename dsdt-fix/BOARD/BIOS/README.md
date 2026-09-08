@@ -11,4 +11,4 @@ Changes in this patch:
 1. <change and why>
 2. <...>
 
-Per-change rationale and sources are annotated in `patch.diff` if any.
+Per-change rationale and sources are annotated in `dsdt.diff` if any.

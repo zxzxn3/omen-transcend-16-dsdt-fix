@@ -9,7 +9,7 @@ Changes in this patch:
    (`acpi_ns_build_normalized_path`).
 3. Fix the Cirrus audio string so the built-in speakers work.
 
-Per-change rationale and sources are annotated in `patch.diff` if any.
+Per-change rationale and sources are annotated in `dsdt.diff` if any.
 
 Sources (j0hnwang and no-hands-hand are GPL-3.0):
 - j0hnwang/OMEN-Transcend-16-ACPI-fix — https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix
