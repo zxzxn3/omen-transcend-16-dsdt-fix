@@ -349,7 +349,7 @@ echo "Install complete. Reboot to apply. Before rebooting:"
 echo "  1. Remove 'acpi=off' from the kernel cmdline. You may KEEP 'noapic' for this first boot as a"
 echo "     safety margin (noapic does not disable ACPI, so the override still applies)."
 echo "  2. After boot, verify the override is active:"
-echo '       dmesg | grep -i "ACPI: Override"      # expect: DSDT ... this is unsafe: tainting kernel'
+echo '       dmesg | grep -i "table override"      # expect: DSDT ... Physical table override'
 echo '       dmesg | grep -i AE_AML_OPERAND_TYPE   # expect: no output'
 echo "  3. Only after those pass, also remove 'noapic'."
 echo "  4. If booting without acpi=off fails: re-add acpi=off noapic, remove"

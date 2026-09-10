@@ -90,9 +90,9 @@ deliberately conservative:
   
 **Confirmed at first boot.** There is no post-build image inspection — the
 script trusts `limine-mkinitcpio`/`mkinitcpio` to have packed the override.
-After the first boot, confirm it is live: `dmesg | grep -i "ACPI: Override"`
-should show the "DSDT ... tainting kernel" message (the installer prints this
-exact check before you reboot).
+After the first boot, confirm it is live: `dmesg | grep -i "table override"`
+should show the "DSDT ... Physical table override" line (the installer prints
+this exact check before you reboot).
 
 **If boot fails**, re-add `acpi=off noapic` and roll back — restore the
 pre-change copy (`/etc/initcpio/acpi_override/dsdt.aml.bak-<timestamp>` →
