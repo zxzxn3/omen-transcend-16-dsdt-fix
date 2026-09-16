@@ -8,9 +8,9 @@
 # One-line install (auto-detects board/BIOS from DMI):
 #   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/dsdt-fix.sh | sudo bash
 #
-# Flow: args -> validate target (an explicit --target must match a complete DMI
-# before any download; mismatch/incomplete DMI is fatal) -> pick the .aml
-# (operand, or repo by --target/DMI) -> confirm on /dev/tty -> download ->
+# Flow: args -> pick the .aml (operand, or repo by --target/DMI; a --target
+# that does not match this machine warns and needs confirmation) -> confirm on
+# /dev/tty -> download ->
 # DSDT signature check -> prepare (staged, no writes) -> atomic apply ->
 # rebuild (limine-mkinitcpio or mkinitcpio -P) -> done.
 # Exit: 0 ok / 1 runtime error / 2 usage error.
@@ -80,8 +80,9 @@ Usage: sudo bash dsdt-fix.sh [OPTIONS] [dsdt.aml PATH]
 
 Options:
   -f, --force      Skip the interactive confirmation before applying/rebuilding.
-                   Also required for unattended use when there is no controlling
-                   terminal. It never bypasses the board/BIOS target check.
+                   This includes accepting a --target that does not match this
+                   machine, and is required for unattended use when there is no
+                   controlling terminal.
       --rebuild     Force an initramfs rebuild even if the override is unchanged.
       --target ID   board/BIOS for the official download, e.g. 8C4D/F.29.
                     (omit: auto-detect from the machine DMI)
@@ -206,24 +207,32 @@ else
     TARGET="${DETECTED_BOARD}/${DETECTED_BIOS}"
   fi
 
-  # The board/BIOS check for the official source lives here, before any
-  # download. An explicit --target is accepted only when this machine's DMI is
-  # complete and matches it; a mismatch or unreadable DMI is fatal. -f/--force
-  # skips confirmations only, never this check. (A local .aml operand bypasses
-  # this path and is installed as-is.)
-  if [ "$EXPLICIT" -eq 1 ]; then
-    if [ -z "$DETECTED_BOARD" ] || [ -z "$DETECTED_BIOS" ]; then
-      echo "Error: cannot verify --target $TARGET: DMI board/BIOS is incomplete on this machine." >&2
-      exit 1
-    fi
-    if [ "$TARGET" != "${DETECTED_BOARD}/${DETECTED_BIOS}" ]; then
-      echo "Error: --target $TARGET does not match this machine (${DETECTED_BOARD}/${DETECTED_BIOS})." >&2
-      echo "       Use a patch for this machine, or pass a local dsdt.aml as the operand." >&2
-      exit 1
-    fi
+  # Board/BIOS check for the official source, before any download. --target is
+  # the operator naming the target on purpose, so a mismatch is a warning they
+  # have to accept (interactively, or with -f/--force) rather than an error;
+  # with no DMI to compare against there is nothing to warn about. The
+  # auto-detect path above already required a complete DMI.
+  if [ "$EXPLICIT" -ne 1 ]; then
+    echo "Patch target: $TARGET (auto-detected)"
+  elif [ -z "$DETECTED_BOARD$DETECTED_BIOS" ]; then
+    echo "Patch target: $TARGET (explicit; no DMI here to verify it against)"
+  elif [ "$TARGET" = "${DETECTED_BOARD}/${DETECTED_BIOS}" ]; then
     echo "Patch target: $TARGET (explicit, matches this machine)"
   else
-    echo "Patch target: $TARGET (auto-detected)"
+    echo "  [WARN] You asked for $TARGET, but this machine reports ${DETECTED_BOARD}/${DETECTED_BIOS}." >&2
+    if [ "$FORCE" -eq 1 ]; then
+      echo "  [OK] Installing it anyway (-f/--force)." >&2
+    elif [ "$TTY" -eq 1 ]; then
+      read -r -p "  Install $TARGET anyway? [y/N] " REPLY </dev/tty || REPLY=''
+      case "$REPLY" in
+        y|Y|yes|Yes) ;;
+        *) echo "  Aborted (nothing was changed)." >&2; exit 1 ;;
+      esac
+    else
+      echo "  Aborted: no terminal to confirm on." >&2
+      echo "         Re-run with -f/--force to install it anyway, or pass a local dsdt.aml." >&2
+      exit 1
+    fi
   fi
 
   URL="${RAW_BASE}/dsdt-fix/${TARGET}/dsdt.aml"
@@ -231,7 +240,7 @@ else
     # no such patch -> list what is available and exit (never auto-fallback)
     echo "  [WARN] No patch for target '$TARGET' in this repo." >&2
     list_patches
-    echo "  No patch is published for this machine; pass a local .aml to install a custom one." >&2
+    echo "  No patch is published for '$TARGET'; pass a local .aml to install a custom one." >&2
     exit 1
   fi
 
