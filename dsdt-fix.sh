@@ -8,9 +8,11 @@
 # One-line install (auto-detects board/BIOS from DMI):
 #   curl -fsSL https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/main/dsdt-fix.sh | sudo bash
 #
-# Flow: args -> pick the .aml (operand, or repo by --target/DMI) -> download
-# -> DSDT signature check -> prepare (staged, no writes) -> confirm ->
-# atomic apply -> rebuild (limine-mkinitcpio or mkinitcpio -P) -> done.
+# Flow: args -> validate target (an explicit --target must match a complete DMI
+# before any download; mismatch/incomplete DMI is fatal) -> pick the .aml
+# (operand, or repo by --target/DMI) -> confirm on /dev/tty -> download ->
+# DSDT signature check -> prepare (staged, no writes) -> atomic apply ->
+# rebuild (limine-mkinitcpio or mkinitcpio -P) -> done.
 # Exit: 0 ok / 1 runtime error / 2 usage error.
 # =====================================================================
 set -euo pipefail
@@ -20,7 +22,14 @@ RAW_BASE="https://raw.githubusercontent.com/zxzxn3/omen-transcend-16-dsdt-fix/ma
 OVERRIDE_DIR="/etc/initcpio/acpi_override"   # where the hook looks for .aml files
 MKINITCPIO_CONF="/etc/mkinitcpio.conf"
 HOOK_NAME="acpi_override"
-[ -t 0 ] && INTERACTIVE=1 || INTERACTIVE=0
+
+# Confirmation is read from the controlling terminal, never from stdin: when
+# this script arrives over a pipe (curl ... | sudo bash) stdin is the script
+# body itself, so reading it would consume the remaining commands. /dev/tty may
+# be absent (systemd unit, cron, CI); TTY=0 then means no confirmation is
+# possible and installation is refused unless -f/--force is given.
+TTY=0
+if { : </dev/tty; } 2>/dev/null; then TTY=1; fi
 
 # ---- rollback state ----
 # Real files are only touched in apply. If we exit before the rebuild is
@@ -70,17 +79,18 @@ show_usage() {
 Usage: sudo bash dsdt-fix.sh [OPTIONS] [dsdt.aml PATH]
 
 Options:
-  -f, --force      Skip the machine-match soft warning and the interactive
-                   confirmation before applying/rebuilding.
+  -f, --force      Skip the interactive confirmation before applying/rebuilding.
+                   Also required for unattended use when there is no controlling
+                   terminal. It never bypasses the board/BIOS target check.
       --rebuild     Force an initramfs rebuild even if the override is unchanged.
       --target ID   board/BIOS for the official download, e.g. 8C4D/F.29.
                     (omit: auto-detect from the machine DMI)
   -l, --list       Print the available patches (installable + upstream links)
-                   and exit. No root, nothing is downloaded or changed.
+                   and exit. Downloads the index only; no root or local changes.
   -h, --help       Show this help and exit.
 
-Operand (optional): a local dsdt.aml (e.g. one you compiled yourself), used
-as-is with no board/BIOS matching.
+Operand (optional): a local dsdt.aml (e.g. one you compiled yourself). It is
+used as-is: there is no board/BIOS metadata to verify it against.
 
 With no operand the patch is pulled from the GitHub repo as
 dsdt-fix/<target>/dsdt.aml. Unknown targets list what is published and exit;
@@ -144,7 +154,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-# -l/--list: just print the available patches and exit (no root, no download)
+# -l/--list: download and print the patch index (no root or local changes)
 if [ "$LIST" -eq 1 ]; then
   command -v curl >/dev/null 2>&1 || { echo "Error: listing patches requires 'curl'." >&2; exit 1; }
   list_patches
@@ -182,19 +192,36 @@ fi
 # ---- pick the .aml: user operand, or official repo by --target / DMI ----
 if [ -n "$SRC" ]; then
   echo "Using user-provided dsdt.aml: $SRC."
+  echo "  Local operand: no board/BIOS metadata to verify; installing it as-is."
 else
   command -v curl >/dev/null 2>&1 || { echo "Error: downloading patches requires 'curl'." >&2; exit 1; }
   EXPLICIT=0
   if [ -n "$TARGET" ]; then
     EXPLICIT=1
   elif [ -z "$DETECTED_BOARD" ] || [ -z "$DETECTED_BIOS" ]; then
-    echo "Error: could not detect board/BIOS from this machine; pass --target <board>/<bios>." >&2
+    echo "Error: could not detect board/BIOS; an official patch cannot be selected safely." >&2
+    echo "       Run on the target machine, or supply a local dsdt.aml as an expert override." >&2
     exit 1
   else
     TARGET="${DETECTED_BOARD}/${DETECTED_BIOS}"
   fi
+
+  # The board/BIOS check for the official source lives here, before any
+  # download. An explicit --target is accepted only when this machine's DMI is
+  # complete and matches it; a mismatch or unreadable DMI is fatal. -f/--force
+  # skips confirmations only, never this check. (A local .aml operand bypasses
+  # this path and is installed as-is.)
   if [ "$EXPLICIT" -eq 1 ]; then
-    echo "Patch target: $TARGET (explicit)"
+    if [ -z "$DETECTED_BOARD" ] || [ -z "$DETECTED_BIOS" ]; then
+      echo "Error: cannot verify --target $TARGET: DMI board/BIOS is incomplete on this machine." >&2
+      exit 1
+    fi
+    if [ "$TARGET" != "${DETECTED_BOARD}/${DETECTED_BIOS}" ]; then
+      echo "Error: --target $TARGET does not match this machine (${DETECTED_BOARD}/${DETECTED_BIOS})." >&2
+      echo "       Use a patch for this machine, or pass a local dsdt.aml as the operand." >&2
+      exit 1
+    fi
+    echo "Patch target: $TARGET (explicit, matches this machine)"
   else
     echo "Patch target: $TARGET (auto-detected)"
   fi
@@ -204,30 +231,10 @@ else
     # no such patch -> list what is available and exit (never auto-fallback)
     echo "  [WARN] No patch for target '$TARGET' in this repo." >&2
     list_patches
-    echo "  Re-run with --target matching an available patch, or pass a local .aml." >&2
+    echo "  No patch is published for this machine; pass a local .aml to install a custom one." >&2
     exit 1
   fi
 
-  # explicit target that differs from this machine -> soft warn (conservative)
-  if [ "$EXPLICIT" -eq 1 ] && [ -n "$DETECTED_BOARD$DETECTED_BIOS" ] \
-     && [ "$TARGET" != "${DETECTED_BOARD}/${DETECTED_BIOS}" ]; then
-    echo "  [WARN] You requested $TARGET, but this machine reports ${DETECTED_BOARD}/${DETECTED_BIOS}." >&2
-    if [ "$FORCE" -ne 1 ]; then
-      if [ "$INTERACTIVE" -eq 1 ]; then
-        read -r -p "  Install $TARGET anyway? [y/N] " REPLY
-        case "$REPLY" in
-          y|Y|yes|Yes) ;;
-          *) echo "  Aborted." >&2; exit 1 ;;
-        esac
-      else
-        echo "  Aborted: the requested patch does not match this machine (non-interactive)." >&2
-        echo "         Re-run with -f/--force, or fix --target." >&2
-        exit 1
-      fi
-    else
-      echo "  [OK] Ignoring machine-match warning (-f/--force)." >&2
-    fi
-  fi
   # print the patch-specific note (README.md in that patch folder), if any
   PATCH_NOTE="$(curl -fsSL "${RAW_BASE}/dsdt-fix/${TARGET}/README.md" 2>/dev/null || true)"
   if [ -n "$PATCH_NOTE" ]; then
@@ -239,12 +246,21 @@ else
   SRC="$URL"
 fi
 
-# one interactive confirmation for the whole operation, before anything is
-# downloaded or written (after the patch note above, when there is one)
-if [ "$INTERACTIVE" -eq 1 ] && [ "$FORCE" -ne 1 ]; then
+# No controlling terminal means there is no way to confirm an install; refuse
+# by default. -f/--force is the explicit opt-in for a deliberate unattended
+# run. --help and --list returned earlier and never need a terminal.
+if [ "$TTY" -ne 1 ] && [ "$FORCE" -ne 1 ]; then
+  echo "Error: no controlling terminal for confirmation." >&2
+  echo "       Re-run in a terminal, or pass -f/--force for unattended install." >&2
+  exit 1
+fi
+
+# one interactive confirmation for the whole operation, read from /dev/tty
+# (stdin may be the piped script body). -f/--force skips it.
+if [ "$FORCE" -ne 1 ]; then
   echo "  Plan: install the DSDT override, add the '${HOOK_NAME}' hook if missing," >&2
   echo "        then rebuild the initramfs." >&2
-  read -r -p "  Continue? [y/N] " REPLY
+  read -r -p "  Continue? [y/N] " REPLY </dev/tty || REPLY=''
   case "$REPLY" in
     y|Y|yes|Yes) ;;
     *) echo "  Aborted (nothing was changed)." >&2; exit 1 ;;
@@ -335,12 +351,16 @@ fi
 
 # ---- rebuild ----
 echo "[3/3] Rebuilding initramfs ..."
+# The rebuild tool must never read stdin when the script arrived over a pipe:
+# stdin there is the script body, not user input. Hand it the controlling
+# terminal when one exists, otherwise /dev/null (reachable only via -f/--force).
+if [ "$TTY" -eq 1 ]; then REBUILD_IN=/dev/tty; else REBUILD_IN=/dev/null; fi
 # CachyOS: limine-mkinitcpio also refreshes the Limine entries; it is already
 # run non-interactively by pacman hooks, so prefer it whenever present.
 if command -v limine-mkinitcpio >/dev/null 2>&1; then
-  limine-mkinitcpio || { echo "Error: initramfs rebuild failed." >&2; exit 1; }
+  limine-mkinitcpio <"$REBUILD_IN" || { echo "Error: initramfs rebuild failed." >&2; exit 1; }
 else
-  mkinitcpio -P || { echo "Error: initramfs rebuild failed." >&2; exit 1; }
+  mkinitcpio -P <"$REBUILD_IN" || { echo "Error: initramfs rebuild failed." >&2; exit 1; }
 fi
 BUILT=1   # rebuild succeeded; the override is baked into the boot images
 
@@ -356,5 +376,4 @@ echo "  4. If booting without acpi=off fails: re-add acpi=off noapic, remove"
 echo "     ${OVERRIDE_DIR}/dsdt.aml, drop '${HOOK_NAME}' from HOOKS in $MKINITCPIO_CONF,"
 echo "     then 'sudo mkinitcpio -P'. A pre-change copy is kept as dsdt.aml.bak-<timestamp>."
 echo ""
-
 
