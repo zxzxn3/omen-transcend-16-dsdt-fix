@@ -1,3 +1,5 @@
+**English** · [Human](README.human.md)
+
 # HP OMEN Transcend 16 — Linux ACPI (DSDT) fix
 
 > **A gibberish from the human owner.** Hi — I spent two days working with Agent to get
