@@ -23,11 +23,7 @@ OVERRIDE_DIR="/etc/initcpio/acpi_override"   # where the hook looks for .aml fil
 MKINITCPIO_CONF="/etc/mkinitcpio.conf"
 HOOK_NAME="acpi_override"
 
-# Confirmation is read from the controlling terminal, never from stdin: when
-# this script arrives over a pipe (curl ... | sudo bash) stdin is the script
-# body itself, so reading it would consume the remaining commands. /dev/tty may
-# be absent (systemd unit, cron, CI); TTY=0 then means no confirmation is
-# possible and installation is refused unless -f/--force is given.
+#TTY=0 then means no confirmation is possible and installation is refused unless -f/--force is given.
 TTY=0
 if { : </dev/tty; } 2>/dev/null; then TTY=1; fi
 
@@ -175,8 +171,6 @@ if [ -d /run/lock ] && command -v flock >/dev/null 2>&1; then
   flock -n 9 || { echo "Error: another dsdt-override install is already running." >&2; exit 1; }
 fi
 
-# .aml executes as kernel code at next boot; say so up front, and include a
-# neutral link for anyone who would rather build/fix their own.
 echo "Caution: A dsdt.aml runs as kernel code at the next boot — only install"
 echo "  .aml files you trust. Made your own fix? Patches welcome via PR:"
 echo "  https://github.com/zxzxn3/omen-transcend-16-dsdt-fix"
@@ -214,10 +208,8 @@ else
   # auto-detect path above already required a complete DMI.
   if [ "$EXPLICIT" -ne 1 ]; then
     echo "Patch target: $TARGET (auto-detected)"
-  elif [ -z "$DETECTED_BOARD$DETECTED_BIOS" ]; then
-    echo "Patch target: $TARGET (explicit; no DMI here to verify it against)"
-  elif [ "$TARGET" = "${DETECTED_BOARD}/${DETECTED_BIOS}" ]; then
-    echo "Patch target: $TARGET (explicit, matches this machine)"
+  elif [ -z "$DETECTED_BOARD$DETECTED_BIOS" ] || [ "$TARGET" = "${DETECTED_BOARD}/${DETECTED_BIOS}" ]; then
+    echo "Patch target: $TARGET"
   else
     echo "  [WARN] You asked for $TARGET, but this machine reports ${DETECTED_BOARD}/${DETECTED_BIOS}." >&2
     if [ "$FORCE" -eq 1 ]; then
