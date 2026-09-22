@@ -314,6 +314,7 @@ fi
 # otherwise stage a HOOKS edit on the main config only (validated before apply)
 NEED_CONF=0
 if [ "$HOOK_OK" -ne 1 ]; then
+  [ -f "$MKINITCPIO_CONF" ] || { echo "Error: $MKINITCPIO_CONF not found; cannot add '${HOOK_NAME}' to it." >&2; exit 1; }
   cp -f "$MKINITCPIO_CONF" "$STAGE/config.new"
   if sed -E 's/^(HOOKS=\([^)]*\bbase)\b/\1 '"${HOOK_NAME}"'/' "$STAGE/config.new" \
        > "$STAGE/config.new.tmp" \
