@@ -1,4 +1,4 @@
-**English** · [Human](README.human.md)
+**English written by ai** | [**English written by owner**](README.human.md)
 
 # HP OMEN Transcend 16 — Linux ACPI (DSDT) fix
 
