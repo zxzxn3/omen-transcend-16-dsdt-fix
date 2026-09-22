@@ -142,7 +142,9 @@ while [ "$#" -gt 0 ]; do
     --rebuild)    REBUILD=1; shift ;;
     --target)     [ "$#" -ge 2 ] || usage_err "--target needs a value, e.g. --target 8C4D/F.29"
                   TARGET="$2"; shift 2 ;;
-    --target=*)   TARGET="${1#*=}"; shift ;;
+    --target=*)   TARGET="${1#*=}"
+                  [ -n "$TARGET" ] || usage_err "--target needs a value, e.g. --target 8C4D/F.29"
+                  shift ;;
     -l|--list)    LIST=1; shift ;;
     -h|--help)    show_usage; exit 0 ;;
     -*)           usage_err "unknown option: $1" ;;
