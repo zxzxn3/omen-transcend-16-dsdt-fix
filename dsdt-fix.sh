@@ -109,7 +109,7 @@ usage_err() { echo "Error: $*" >&2; echo >&2; show_usage >&2; exit 2; }
 list_patches() {
   local idx list own up
   idx="$(curl -fsSL "${RAW_BASE}/dsdt-fix/index.md" 2>/dev/null || true)"
-  [ -n "$idx" ] || { echo "    (could not read the patch list)" >&2; return 0; }
+  [ -n "$idx" ] || { echo "    (could not read the patch list)" >&2; return 1; }
   list="$(printf '%s\n' "$idx" | awk -F'|' '
     /^##[[:space:]]/ { s=$0; sub(/^##[[:space:]]+/, "", s)
                        mode = (s ~ /^Installable/) ? "I" : (s ~ /^Upstream/) ? "U" : ""
@@ -123,7 +123,7 @@ list_patches() {
       else if (mode == "U" && b != "") print "U\t" a "\t" b
     }
   ' || true)"
-  [ -n "$list" ] || { echo "    (could not read the patch list)" >&2; return 0; }
+  [ -n "$list" ] || { echo "    (could not read the patch list)" >&2; return 1; }
   own="$(printf '%s\n' "$list" | awk -F'\t' '$1=="I"{print $2}')" || true
   up="$(printf '%s\n' "$list" | awk -F'\t' '$1=="U"{print $2"\t"$3}')" || true
   if [ -n "$own" ]; then
@@ -156,7 +156,7 @@ done
 # -l/--list: download and print the patch index (no root or local changes)
 if [ "$LIST" -eq 1 ]; then
   command -v curl >/dev/null 2>&1 || { echo "Error: listing patches requires 'curl'." >&2; exit 1; }
-  list_patches
+  list_patches || exit 1
   exit 0
 fi
 
@@ -233,7 +233,7 @@ else
   if [ "$(curl -s -o /dev/null -w '%{http_code}' "$URL" || true)" != "200" ]; then
     # no such patch -> list what is available and exit (never auto-fallback)
     echo "  [WARN] No patch for target '$TARGET' in this repo." >&2
-    list_patches
+    list_patches || true
     echo "  No patch is published for '$TARGET'; pass a local .aml to install a custom one." >&2
     exit 1
   fi
