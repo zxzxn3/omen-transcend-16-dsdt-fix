@@ -295,7 +295,7 @@ fi
 HOOK_OK=0
 CONF_FILES=("$MKINITCPIO_CONF" /etc/mkinitcpio.conf.d/*.conf)
 for f in "${CONF_FILES[@]}"; do
-  if [ -f "$f" ] && grep -qE '^\s*HOOKS=.*\bacpi_override\b' "$f" 2>/dev/null; then
+  if [ -f "$f" ] && grep -qE "^\s*HOOKS=.*\b${HOOK_NAME}\b" "$f" 2>/dev/null; then
     HOOK_OK=1
     break
   fi
@@ -315,7 +315,7 @@ if [ "$HOOK_OK" -ne 1 ]; then
        > "$STAGE/config.new.tmp" \
      && mv -f "$STAGE/config.new.tmp" "$STAGE/config.new" \
      && bash -n "$STAGE/config.new" 2>/dev/null \
-     && grep -qE '^\s*HOOKS=\([^)]*\bacpi_override\b' "$STAGE/config.new"; then
+     && grep -qE "^\s*HOOKS=\([^)]*\b${HOOK_NAME}\b" "$STAGE/config.new"; then
     NEED_CONF=1
     cp -f "$MKINITCPIO_CONF" "$STAGE/config.orig"   # rollback snapshot
     echo "  [OK] Will add ${HOOK_NAME} after 'base' in: $MKINITCPIO_CONF"
