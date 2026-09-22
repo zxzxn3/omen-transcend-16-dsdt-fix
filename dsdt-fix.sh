@@ -54,7 +54,9 @@ on_exit() {
       mv -f "$STAGE/config.orig" "$MKINITCPIO_CONF"
       echo "  [OK] Restored $MKINITCPIO_CONF (reverted HOOKS edit)." >&2
     fi
-    echo "  Re-run dsdt-fix.sh to try again." >&2
+    echo "  [NOTE] The initramfs was not rebuilt. If a rebuild had already started," >&2
+    echo "         images on disk may already contain this change or be truncated;" >&2
+    echo "         verify them before rebooting. Re-run dsdt-fix.sh to try again." >&2
     rm -f -- "$OVERRIDE_DIR/dsdt.aml.new" "$MKINITCPIO_CONF.new" 2>/dev/null || true
   fi
   [ -n "$STAGE" ] && rm -rf -- "$STAGE"
