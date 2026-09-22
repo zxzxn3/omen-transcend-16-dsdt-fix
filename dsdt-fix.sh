@@ -124,8 +124,8 @@ list_patches() {
     }
   ' || true)"
   [ -n "$list" ] || { echo "    (could not read the patch list)" >&2; return 0; }
-  own="$(printf '%s\n' "$list" | awk -F'\t' '$1=="I"{print $2}') " || true
-  up="$(printf '%s\n' "$list" | awk -F'\t' '$1=="U"{print $2"\t"$3}') " || true
+  own="$(printf '%s\n' "$list" | awk -F'\t' '$1=="I"{print $2}')" || true
+  up="$(printf '%s\n' "$list" | awk -F'\t' '$1=="U"{print $2"\t"$3}')" || true
   if [ -n "$own" ]; then
     echo "  Installable with dsdt-fix.sh:"
     printf '%s\n' "$own" | sed 's/^/    /'
