@@ -11,6 +11,8 @@ Changes in this patch:
 
 Per-change rationale and sources are annotated in `dsdt.diff` if any.
 
+An earlier `SOD3` type guard was replaced by removing the colliding `Device (IC04)` to resolve the name conflict for both `SOD3` and `I2CH(IC04)`.
+
 Sources (j0hnwang and no-hands-hand are GPL-3.0):
 - j0hnwang/OMEN-Transcend-16-ACPI-fix — https://github.com/j0hnwang/OMEN-Transcend-16-ACPI-fix
 - no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27 — https://github.com/no-hands-hand/OMEN-Transcend-16-ACPI-fix-f27
